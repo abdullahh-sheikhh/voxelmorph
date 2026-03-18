@@ -26,6 +26,7 @@ MANIFEST
 .vscode/settings.json
 .vscode/settings.json
 **/*.ipynb
+!scripts/cell_tracking/*.ipynb
 
 # Data files
 **/*.h5

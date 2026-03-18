@@ -55,11 +55,12 @@ Target frame (t_n+1)─┘                                      │
                                                       Warped Source
 ```
 
-**Loss**: `MSE(target, warped_source) + λ * SpatialGradient(displacement)`
+**Loss**: `L_sim(target, warped_source) + λ * SpatialGradient(displacement)`
 
+- Similarity: MSE (λ=0.01) or NCC (λ=1.0)
 - Model: 83,544 parameters
 - Images padded to 704x544 (divisible by 32 for UNet)
-- Hyperparameters from paper: ADAM lr=1e-4, λ=0.01, batch_size=1
+- Hyperparameters from paper: ADAM lr=1e-4, batch_size=1
 
 ## Usage
 
@@ -72,30 +73,60 @@ python -m scripts.cell_tracking.train --data-dir dataset/train --epochs 500
 ```
 
 Options:
+- `--loss mse|ncc` — image similarity loss (default: mse)
 - `--epochs N` — number of epochs (default: 500)
 - `--batch-size N` — batch size (default: 1)
 - `--lr F` — learning rate (default: 1e-4)
-- `--lambda F` — regularization weight (default: 0.01)
+- `--lambda F` — regularization weight (default: 0.01 for MSE, 1.0 for NCC)
 - `--pairing consecutive|random` — frame pairing (default: consecutive)
 - `--int-steps N` — 0=direct displacement, >0=diffeomorphic (default: 0)
 - `--nb-features 16 32 32 32` — UNet feature counts per level
 - `--output-dir DIR` — where to save models (default: output/)
 - `--save-every N` — checkpoint interval (default: 50)
 
+Train with NCC loss and diffeomorphic mode:
+```bash
+python -m scripts.cell_tracking.train \
+    --data-dir dataset/train --epochs 500 \
+    --loss ncc --lambda 1.0 --int-steps 7
+```
+
 ### Evaluate
 
 ```bash
 python -m scripts.cell_tracking.evaluate \
     --model output/best.pt \
-    --data-dir dataset/test \
-    --output-dir output/eval
+    --data-dir dataset/train \
+    --gt-dir dataset/train \
+    --output-dir output/eval \
+    --max-pairs 0
 ```
+
+Metrics:
+- **MSE**: image similarity between target and warped source
+- **Dice**: segmentation overlap using GT tracking masks (requires `--gt-dir`)
+- **Jacobian**: deformation regularity (% folding pixels)
+- **Runtime**: seconds per registration pair
 
 Generates per-pair visualizations:
 - Source / Target / Warped Source
 - Difference map (residual error)
 - Displacement field (color-coded)
-- Jacobian determinant (deformation regularity)
+- Jacobian determinant
+
+Saves `metrics.json` with all results for programmatic access.
+
+### Track Cells
+
+```bash
+python -m scripts.cell_tracking.track \
+    --model output/best.pt \
+    --data-dir dataset/train \
+    --sequence 01 \
+    --output-dir output/tracking
+```
+
+Chains displacement fields across all consecutive frames to propagate cell segmentation masks forward in time. Outputs tracked masks per frame, cell centroid trajectories, and visualizations.
 
 ### Register
 
@@ -112,13 +143,29 @@ python -m scripts.cell_tracking.register \
 
 ```
 scripts/cell_tracking/
-├── README.md         # This file
+├── README.md             # This file
 ├── __init__.py
-├── dataset.py        # CellTrackingDataset — TIF loader, padding, normalization
-├── train.py          # Training loop
-├── evaluate.py       # Visualization + metrics
-└── register.py       # Pairwise inference
+├── dataset.py            # CellTrackingDataset — TIF loader, padding, normalization
+├── train.py              # Training loop (MSE or NCC loss, direct or diffeomorphic)
+├── evaluate.py           # Metrics: MSE, Dice, Jacobian, runtime + visualizations
+├── register.py           # Pairwise inference
+├── track.py              # Sequence-level cell tracking via mask propagation
+├── train_colab.ipynb     # Full pipeline notebook for Google Colab (GPU)
+└── requirements.txt      # Extra dependencies (imagecodecs)
 ```
+
+## Results
+
+Results from 100 epochs on Colab T4 (~13 min per variant):
+
+| Variant | Loss | Lambda | Int Steps | MSE | Dice | Folding % |
+|---------|------|--------|-----------|-----|------|-----------|
+| VM-1 | MSE | 0.01 | 0 | _TBD_ | _TBD_ | 0.00% |
+| VM-2 | NCC | 1.0 | 0 | _TBD_ | _TBD_ | _TBD_ |
+| VM-3 | MSE | 0.01 | 7 | _TBD_ | _TBD_ | _TBD_ |
+| VM-4 | NCC | 1.0 | 7 | _TBD_ | _TBD_ | _TBD_ |
+
+_(Fill after running experiments on Colab)_
 
 ## References
 

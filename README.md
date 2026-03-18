@@ -156,6 +156,22 @@ IEEE TMI: Transactions on Medical Imaging. 2019.
 CVPR 2018. [eprint arXiv:1802.02604](https://arxiv.org/abs/1802.02604)
 
 
+## 2D Cell Tracking (PhC-C2DH-U373)
+
+We adapt VoxelMorph for 2D cell tracking on phase-contrast microscopy data from the
+[Cell Tracking Challenge](http://celltrackingchallenge.net/). All cell tracking code
+lives in `scripts/cell_tracking/` — no original VoxelMorph files are modified.
+
+- **Dataset**: Glioblastoma-astrocytoma U373 cells, 696x520 px, 8-bit grayscale, 15 min/frame
+- **Model**: VxmPairwise(ndim=2, features=[16,32,32,32]), 83K parameters
+- **Losses**: MSE or NCC + SpatialGradient regularization
+- **Evaluation**: MSE, Dice score (on GT segmentation masks), Jacobian regularity
+- **Training**: ~13 min for 100 epochs on Colab T4
+- **Colab notebook**: [`scripts/cell_tracking/train_colab.ipynb`](scripts/cell_tracking/train_colab.ipynb)
+
+See [`scripts/cell_tracking/README.md`](scripts/cell_tracking/README.md) for full details.
+
+
 # Notes
 - **keywords**: machine learning, convolutional neural networks, alignment, mapping, registration  
 - **data in papers**: 

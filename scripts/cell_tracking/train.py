@@ -15,12 +15,14 @@ Paper reference:
 
 Usage:
     python -m scripts.cell_tracking.train --data-dir dataset/train --epochs 500
+    python -m scripts.cell_tracking.train --data-dir dataset/train --loss ncc --lambda 1.0 --epochs 500
 """
 
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import argparse
+import json
 from pathlib import Path
 from typing import Sequence
 
@@ -42,6 +44,7 @@ def train_epoch(
     grad_loss_fn: nn.Module,
     loss_weights: Sequence[float],
     device: str = 'cuda',
+    negate_image_loss: bool = False,
 ) -> float:
     """
     model : nn.Module
@@ -58,6 +61,8 @@ def train_epoch(
         Weights [image_loss_weight, grad_loss_weight].
     device : str
         Device to train on.
+    negate_image_loss : bool
+        If True, negate the image loss (for NCC which returns similarity).
     """
     model.train()
     total_loss = 0.0
@@ -77,6 +82,8 @@ def train_epoch(
         )
 
         img_loss = image_loss_fn(target, warped_source)
+        if negate_image_loss:
+            img_loss = -img_loss
         grad_loss = grad_loss_fn(displacement)
         loss = loss_weights[0] * img_loss + loss_weights[1] * grad_loss
 
@@ -111,14 +118,17 @@ def main():
                         help='Integration steps (0=direct displacement, >0=diffeomorphic)')
 
     # Training
+    parser.add_argument('--loss', type=str, default='mse',
+                        choices=['mse', 'ncc'],
+                        help='Image similarity loss (default: mse)')
     parser.add_argument('--epochs', type=int, default=500,
                         help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='Batch size (paper default: 1)')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='Learning rate (paper default: 1e-4)')
-    parser.add_argument('--lambda', type=float, dest='lambda_param', default=0.01,
-                        help='Regularization weight (paper: 0.01 for MSE)')
+    parser.add_argument('--lambda', type=float, dest='lambda_param', default=None,
+                        help='Regularization weight (default: 0.01 for MSE, 1.0 for NCC)')
     parser.add_argument('--workers', type=int, default=0,
                         help='DataLoader workers')
 
@@ -162,10 +172,21 @@ def main():
           f'int_steps={args.int_steps}), {param_count:,} parameters')
 
     # Loss functions (from neurite, as per codebase conventions)
-    image_loss_fn = ne.nn.modules.MSE()
+    # NCC returns positive similarity (1.0 = perfect) — negate for minimization
+    if args.loss == 'ncc':
+        image_loss_fn = ne.nn.modules.NCC()
+        negate_image_loss = True
+        lambda_default = 1.0
+    else:
+        image_loss_fn = ne.nn.modules.MSE()
+        negate_image_loss = False
+        lambda_default = 0.01
+
+    lambda_param = args.lambda_param if args.lambda_param is not None else lambda_default
     grad_loss_fn = ne.nn.modules.SpatialGradient('l2')
-    loss_weights = [1.0, args.lambda_param]
-    print(f'Loss: MSE + {args.lambda_param} * SpatialGradient(L2)')
+    loss_weights = [1.0, lambda_param]
+    loss_name = args.loss.upper()
+    print(f'Loss: {loss_name} + {lambda_param} * SpatialGradient(L2)')
 
     # Optimizer (ADAM, paper default)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -187,6 +208,7 @@ def main():
             grad_loss_fn=grad_loss_fn,
             loss_weights=loss_weights,
             device=device,
+            negate_image_loss=negate_image_loss,
         )
 
         # Log
@@ -206,6 +228,21 @@ def main():
 
     # Final model
     torch.save(model.state_dict(), output_dir / 'final.pt')
+
+    # Save training config for reproducibility
+    config = {
+        'loss': args.loss,
+        'lambda': lambda_param,
+        'int_steps': args.int_steps,
+        'nb_features': args.nb_features,
+        'lr': args.lr,
+        'epochs': args.epochs,
+        'batch_size': args.batch_size,
+        'best_loss': best_loss,
+    }
+    with open(output_dir / 'config.json', 'w') as f:
+        json.dump(config, f, indent=2)
+
     print(f'\nDone. Best loss: {best_loss:.6f}')
     print(f'Models saved to {output_dir}/')
 

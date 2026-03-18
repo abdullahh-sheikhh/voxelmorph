@@ -1,28 +1,33 @@
 """
-Evaluate a trained VoxelMorph model on cell tracking test data.
+Evaluate a trained VoxelMorph model on cell tracking data.
 
-Generates visualizations:
-- Source / Target / Warped Source side-by-side
-- Difference map: |target - warped_source|
-- Displacement field: color-coded flow (RGB per dimension, like paper Fig. 6)
-- Metrics: MSE, Jacobian determinant regularity
+Metrics:
+- MSE: image similarity between target and warped source
+- Dice: segmentation overlap (requires --gt-dir with TRA masks)
+- Jacobian determinant: deformation regularity (% folding pixels)
+- Runtime: seconds per registration pair
 
 Usage:
     python -m scripts.cell_tracking.evaluate \
         --model output/best.pt \
-        --data-dir dataset/test \
+        --data-dir dataset/train \
+        --gt-dir dataset/train \
         --output-dir output/eval
 """
 
 import argparse
+import json
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from skimage import io
 
 import voxelmorph as vxm
 from scripts.cell_tracking.dataset import CellTrackingDataset
+from scripts.cell_tracking.track import warp_mask
 
 
 def compute_jacobian_determinant(displacement: np.ndarray) -> np.ndarray:
@@ -39,17 +44,70 @@ def compute_jacobian_determinant(displacement: np.ndarray) -> np.ndarray:
     np.ndarray
         Jacobian determinant at each pixel, shape (H, W).
     """
-    # displacement[0] = dx, displacement[1] = dy
-    # Jacobian of phi = Id + u:
-    # J = [[1 + du_x/dx, du_x/dy],
-    #      [du_y/dx, 1 + du_y/dy]]
-    dudx = np.gradient(displacement[0], axis=1)  # du_x / dx
-    dudy = np.gradient(displacement[0], axis=0)  # du_x / dy
-    dvdx = np.gradient(displacement[1], axis=1)  # du_y / dx
-    dvdy = np.gradient(displacement[1], axis=0)  # du_y / dy
+    dudx = np.gradient(displacement[0], axis=1)
+    dudy = np.gradient(displacement[0], axis=0)
+    dvdx = np.gradient(displacement[1], axis=1)
+    dvdy = np.gradient(displacement[1], axis=0)
 
     jac_det = (1 + dudx) * (1 + dvdy) - dudy * dvdx
     return jac_det
+
+
+def compute_dice_scores(
+    warped_mask: np.ndarray,
+    target_mask: np.ndarray,
+) -> dict[int, float]:
+    """
+    Compute per-cell Dice score between warped source mask and target mask.
+
+    Parameters
+    ----------
+    warped_mask : np.ndarray
+        Warped source segmentation mask (H, W) with integer cell IDs.
+    target_mask : np.ndarray
+        Ground truth target segmentation mask (H, W) with integer cell IDs.
+
+    Returns
+    -------
+    dict
+        {cell_id: dice_score} for each non-background label present in
+        either mask. Dice = 2*|A intersect B| / (|A| + |B|).
+    """
+    labels = set(np.unique(warped_mask)) | set(np.unique(target_mask))
+    labels.discard(0)
+
+    scores = {}
+    for label in sorted(labels):
+        a = (warped_mask == label)
+        b = (target_mask == label)
+        intersection = np.sum(a & b)
+        total = np.sum(a) + np.sum(b)
+        if total == 0:
+            continue
+        scores[int(label)] = 2.0 * intersection / total
+    return scores
+
+
+def load_gt_mask(gt_dir: Path, frame_idx: int) -> np.ndarray | None:
+    """
+    Load a ground truth tracking mask for a given frame index.
+
+    Parameters
+    ----------
+    gt_dir : Path
+        Directory containing man_track*.tif files.
+    frame_idx : int
+        Frame index (0-based).
+
+    Returns
+    -------
+    np.ndarray or None
+        Mask of shape (H, W) with integer cell IDs, or None if not found.
+    """
+    mask_path = gt_dir / f'man_track{frame_idx:03d}.tif'
+    if not mask_path.exists():
+        return None
+    return io.imread(str(mask_path)).astype(np.int32)
 
 
 def visualize_pair(
@@ -80,7 +138,6 @@ def visualize_pair(
     """
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
-    # Row 1: Source, Target, Warped Source
     axes[0, 0].imshow(source, cmap='gray', vmin=0, vmax=1)
     axes[0, 0].set_title('Source (moving)')
     axes[0, 0].axis('off')
@@ -93,19 +150,14 @@ def visualize_pair(
     axes[0, 2].set_title('Warped Source')
     axes[0, 2].axis('off')
 
-    # Row 2: Difference map, Displacement field (color), Jacobian determinant
     diff = np.abs(target - warped)
     axes[1, 0].imshow(diff, cmap='hot', vmin=0, vmax=0.5)
     axes[1, 0].set_title(f'|Target - Warped| (MSE={np.mean(diff**2):.6f})')
     axes[1, 0].axis('off')
 
-    # Displacement as color-coded flow (like paper Fig. 6)
-    # Map dx to red, dy to green, magnitude to blue
     dx = displacement[0]
     dy = displacement[1]
     magnitude = np.sqrt(dx ** 2 + dy ** 2)
-
-    # Normalize for visualization
     max_mag = max(magnitude.max(), 1e-8)
     flow_rgb = np.stack([
         np.clip(np.abs(dx) / max_mag, 0, 1),
@@ -117,7 +169,6 @@ def visualize_pair(
     axes[1, 1].set_title(f'Displacement Field (max={max_mag:.2f}px)')
     axes[1, 1].axis('off')
 
-    # Jacobian determinant
     jac_det = compute_jacobian_determinant(displacement)
     n_folding = np.sum(jac_det <= 0)
     pct_folding = 100 * n_folding / jac_det.size
@@ -134,12 +185,15 @@ def visualize_pair(
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Evaluate VoxelMorph on cell tracking test data'
+        description='Evaluate VoxelMorph on cell tracking data'
     )
     parser.add_argument('--model', type=str, required=True,
                         help='Path to trained model (.pt)')
-    parser.add_argument('--data-dir', type=str, default='dataset/test',
-                        help='Path to test data directory')
+    parser.add_argument('--data-dir', type=str, default='dataset/train',
+                        help='Path to data directory')
+    parser.add_argument('--gt-dir', type=str, default=None,
+                        help='Path to GT directory (enables Dice evaluation). '
+                        'Should contain {seq}_GT/TRA/ folders.')
     parser.add_argument('--sequences', nargs='+', default=['01', '02'],
                         help='Sequence folders to evaluate')
     parser.add_argument('--output-dir', type=str, default='output/eval',
@@ -150,7 +204,7 @@ def main():
     parser.add_argument('--int-steps', type=int, default=0,
                         help='Integration steps (must match training)')
     parser.add_argument('--max-pairs', type=int, default=20,
-                        help='Max pairs to visualize (default: 20)')
+                        help='Max pairs to evaluate (0 = all)')
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -175,7 +229,14 @@ def main():
         sequences=args.sequences,
         pairing='consecutive',
     )
-    print(f'Test set: {len(dataset)} consecutive pairs')
+
+    n_total = len(dataset)
+    n_pairs = n_total if args.max_pairs == 0 else min(n_total, args.max_pairs)
+    print(f'Dataset: {n_total} consecutive pairs, evaluating {n_pairs}')
+
+    use_dice = args.gt_dir is not None
+    if use_dice:
+        print(f'Dice evaluation enabled (GT from {args.gt_dir})')
 
     # Output directory
     output_dir = Path(args.output_dir)
@@ -184,7 +245,8 @@ def main():
     # Evaluate
     all_mse = []
     all_folding_pct = []
-    n_pairs = min(len(dataset), args.max_pairs)
+    all_dice = []
+    all_runtimes = []
 
     print(f'\nEvaluating {n_pairs} pairs...\n')
 
@@ -194,35 +256,92 @@ def main():
             source = batch['source'].unsqueeze(0).to(device)
             target = batch['target'].unsqueeze(0).to(device)
 
+            # Timed inference
+            start = time.time()
             displacement, warped_source = model(
                 source, target,
                 return_warped_source=True,
                 return_field_type='displacement',
             )
+            if device == 'cuda':
+                torch.cuda.synchronize()
+            elapsed = time.time() - start
+            all_runtimes.append(elapsed)
 
-            # Convert to numpy (remove batch and channel dims)
+            # Convert to numpy
             src_np = source[0, 0].cpu().numpy()
             tgt_np = target[0, 0].cpu().numpy()
             warp_np = warped_source[0, 0].cpu().numpy()
             disp_np = displacement[0].cpu().numpy()  # (2, H, W)
 
-            # Metrics
+            # MSE
             mse = np.mean((tgt_np - warp_np) ** 2)
+            all_mse.append(mse)
+
+            # Jacobian
             jac_det = compute_jacobian_determinant(disp_np)
             folding_pct = 100 * np.sum(jac_det <= 0) / jac_det.size
-
-            all_mse.append(mse)
             all_folding_pct.append(folding_pct)
 
-            # Visualize
-            visualize_pair(src_np, tgt_np, warp_np, disp_np, output_dir, i)
-            print(f'  Pair {i}: MSE={mse:.6f}, Folding={folding_pct:.2f}%')
+            # Dice (if GT available)
+            pair_dice = None
+            if use_dice:
+                source_path, target_path = dataset.pairs[i]
+                seq = source_path.parent.name
+                src_frame = int(source_path.stem[1:])
+                tgt_frame = int(target_path.stem[1:])
+
+                gt_dir = Path(args.gt_dir) / f'{seq}_GT' / 'TRA'
+                src_mask = load_gt_mask(gt_dir, src_frame)
+                tgt_mask = load_gt_mask(gt_dir, tgt_frame)
+
+                if src_mask is not None and tgt_mask is not None:
+                    warped_mask = warp_mask(src_mask, disp_np)
+                    dice_scores = compute_dice_scores(warped_mask, tgt_mask)
+                    if dice_scores:
+                        pair_dice = np.mean(list(dice_scores.values()))
+                        all_dice.append(pair_dice)
+
+            # Visualize (only first 20 to avoid too many files)
+            if i < 20:
+                visualize_pair(src_np, tgt_np, warp_np, disp_np, output_dir, i)
+
+            # Log
+            log = f'  Pair {i}: MSE={mse:.6f}, Folding={folding_pct:.2f}%'
+            if pair_dice is not None:
+                log += f', Dice={pair_dice:.4f}'
+            log += f', {elapsed:.3f}s'
+            print(log)
 
     # Summary
     print(f'\n--- Summary ({n_pairs} pairs) ---')
     print(f'MSE:     {np.mean(all_mse):.6f} +/- {np.std(all_mse):.6f}')
     print(f'Folding: {np.mean(all_folding_pct):.2f}% +/- {np.std(all_folding_pct):.2f}%')
-    print(f'\nVisualizations saved to {output_dir}/')
+    print(f'Runtime: {np.mean(all_runtimes):.4f} +/- {np.std(all_runtimes):.4f} s/pair ({device})')
+    if all_dice:
+        print(f'Dice:    {np.mean(all_dice):.4f} +/- {np.std(all_dice):.4f}')
+
+    # Save metrics to JSON
+    results = {
+        'n_pairs': n_pairs,
+        'device': device,
+        'mse_mean': float(np.mean(all_mse)),
+        'mse_std': float(np.std(all_mse)),
+        'folding_mean': float(np.mean(all_folding_pct)),
+        'folding_std': float(np.std(all_folding_pct)),
+        'runtime_mean': float(np.mean(all_runtimes)),
+        'runtime_std': float(np.std(all_runtimes)),
+    }
+    if all_dice:
+        results['dice_mean'] = float(np.mean(all_dice))
+        results['dice_std'] = float(np.std(all_dice))
+
+    metrics_path = output_dir / 'metrics.json'
+    with open(metrics_path, 'w') as f:
+        json.dump(results, f, indent=2)
+
+    print(f'\nMetrics saved to {metrics_path}')
+    print(f'Visualizations saved to {output_dir}/')
 
 
 if __name__ == '__main__':
