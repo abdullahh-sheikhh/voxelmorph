@@ -31,19 +31,7 @@ from scripts.cell_tracking.track import warp_mask
 
 
 def compute_jacobian_determinant(displacement: np.ndarray) -> np.ndarray:
-    """
-    Compute the Jacobian determinant of a 2D displacement field.
-
-    Parameters
-    ----------
-    displacement : np.ndarray
-        Displacement field of shape (2, H, W).
-
-    Returns
-    -------
-    np.ndarray
-        Jacobian determinant at each pixel, shape (H, W).
-    """
+    """Jacobian determinant of a 2D displacement field (2, H, W) -> (H, W)."""
     dudx = np.gradient(displacement[0], axis=1)
     dudy = np.gradient(displacement[0], axis=0)
     dvdx = np.gradient(displacement[1], axis=1)
@@ -53,26 +41,9 @@ def compute_jacobian_determinant(displacement: np.ndarray) -> np.ndarray:
     return jac_det
 
 
-def compute_dice_scores(
-    warped_mask: np.ndarray,
-    target_mask: np.ndarray,
-) -> dict[int, float]:
-    """
-    Compute per-cell Dice score between warped source mask and target mask.
-
-    Parameters
-    ----------
-    warped_mask : np.ndarray
-        Warped source segmentation mask (H, W) with integer cell IDs.
-    target_mask : np.ndarray
-        Ground truth target segmentation mask (H, W) with integer cell IDs.
-
-    Returns
-    -------
-    dict
-        {cell_id: dice_score} for each non-background label present in
-        either mask. Dice = 2*|A intersect B| / (|A| + |B|).
-    """
+def compute_dice_scores(warped_mask: np.ndarray, target_mask: np.ndarray) -> dict[int, float]:
+    """Per-cell Dice between warped source mask and target mask.
+    Returns {cell_id: dice} for each non-background label."""
     labels = set(np.unique(warped_mask)) | set(np.unique(target_mask))
     labels.discard(0)
 
@@ -89,53 +60,15 @@ def compute_dice_scores(
 
 
 def load_gt_mask(gt_dir: Path, frame_idx: int) -> np.ndarray | None:
-    """
-    Load a ground truth tracking mask for a given frame index.
-
-    Parameters
-    ----------
-    gt_dir : Path
-        Directory containing man_track*.tif files.
-    frame_idx : int
-        Frame index (0-based).
-
-    Returns
-    -------
-    np.ndarray or None
-        Mask of shape (H, W) with integer cell IDs, or None if not found.
-    """
+    """Load GT tracking mask for given frame. Returns None if file missing."""
     mask_path = gt_dir / f'man_track{frame_idx:03d}.tif'
     if not mask_path.exists():
         return None
     return io.imread(str(mask_path)).astype(np.int32)
 
 
-def visualize_pair(
-    source: np.ndarray,
-    target: np.ndarray,
-    warped: np.ndarray,
-    displacement: np.ndarray,
-    save_path: Path,
-    pair_idx: int,
-):
-    """
-    Create a visualization figure for one registration pair.
-
-    Parameters
-    ----------
-    source : np.ndarray
-        Source image (H, W).
-    target : np.ndarray
-        Target image (H, W).
-    warped : np.ndarray
-        Warped source image (H, W).
-    displacement : np.ndarray
-        Displacement field (2, H, W).
-    save_path : Path
-        Directory to save the figure.
-    pair_idx : int
-        Pair index for filename.
-    """
+def visualize_pair(source, target, warped, displacement, save_path, pair_idx):
+    """Save a 2x3 visualization grid for one registration pair."""
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
     axes[0, 0].imshow(source, cmap='gray', vmin=0, vmax=1)
@@ -151,31 +84,27 @@ def visualize_pair(
     axes[0, 2].axis('off')
 
     diff = np.abs(target - warped)
-    axes[1, 0].imshow(diff, cmap='hot', vmin=0, vmax=0.5)
+    im_diff = axes[1, 0].imshow(diff, cmap='hot', vmin=0, vmax=0.5)
     axes[1, 0].set_title(f'|Target - Warped| (MSE={np.mean(diff**2):.6f})')
     axes[1, 0].axis('off')
+    fig.colorbar(im_diff, ax=axes[1, 0], fraction=0.046, pad=0.04)
 
-    dx = displacement[0]
-    dy = displacement[1]
+    # displacement magnitude
+    dx, dy = displacement[0], displacement[1]
     magnitude = np.sqrt(dx ** 2 + dy ** 2)
-    max_mag = max(magnitude.max(), 1e-8)
-    flow_rgb = np.stack([
-        np.clip(np.abs(dx) / max_mag, 0, 1),
-        np.clip(np.abs(dy) / max_mag, 0, 1),
-        np.clip(magnitude / max_mag, 0, 1),
-    ], axis=-1)
-
-    axes[1, 1].imshow(flow_rgb)
-    axes[1, 1].set_title(f'Displacement Field (max={max_mag:.2f}px)')
+    im_mag = axes[1, 1].imshow(magnitude, cmap='viridis')
+    axes[1, 1].set_title(f'Displacement Magnitude (max={magnitude.max():.2f}px)')
     axes[1, 1].axis('off')
+    fig.colorbar(im_mag, ax=axes[1, 1], fraction=0.046, pad=0.04, label='pixels')
 
     jac_det = compute_jacobian_determinant(displacement)
-    n_folding = np.sum(jac_det <= 0)
-    pct_folding = 100 * n_folding / jac_det.size
+    folding_count = np.sum(jac_det <= 0)
+    pct_folding = 100.0 * folding_count / jac_det.size
 
-    axes[1, 2].imshow(jac_det, cmap='RdBu', vmin=0, vmax=2)
+    im_jac = axes[1, 2].imshow(jac_det, cmap='RdBu', vmin=0, vmax=2)
     axes[1, 2].set_title(f'Jacobian Det (folding: {pct_folding:.2f}%)')
     axes[1, 2].axis('off')
+    fig.colorbar(im_jac, ax=axes[1, 2], fraction=0.046, pad=0.04)
 
     plt.suptitle(f'Pair {pair_idx}', fontsize=14, fontweight='bold')
     plt.tight_layout()

@@ -156,16 +156,13 @@ scripts/cell_tracking/
 
 ## Results
 
-Results from 100 epochs on Colab T4 (~13 min per variant):
 
-| Variant | Loss | Lambda | Int Steps | MSE | Dice | Folding % |
-|---------|------|--------|-----------|-----|------|-----------|
-| VM-1 | MSE | 0.01 | 0 | _TBD_ | _TBD_ | 0.00% |
-| VM-2 | NCC | 1.0 | 0 | _TBD_ | _TBD_ | _TBD_ |
-| VM-3 | MSE | 0.01 | 7 | _TBD_ | _TBD_ | _TBD_ |
-| VM-4 | NCC | 1.0 | 7 | _TBD_ | _TBD_ | _TBD_ |
-
-_(Fill after running experiments on Colab)_
+| Variant | Loss | Lambda | Int Steps | MSE | Dice | Folding % | Runtime (s/pair) |
+|---------|------|--------|-----------|-----|------|-----------|------------------|
+| VM-1 | MSE | 0.01 | 0 | 0.000317 +/- 0.000122 | 0.5305 +/- 0.1301 | 0.01% | 0.0102 |
+| VM-2 | NCC | 1.0 | 0 | 0.000351 +/- 0.000162 | 0.5112 +/- 0.1299 | 0.00% | 0.0102 |
+| VM-3 | MSE | 0.01 | 7 | 0.000326 +/- 0.000123 | 0.5321 +/- 0.1302 | 0.00% | 0.0126 |
+| VM-4 | NCC | 1.0 | 7 | 0.000402 +/- 0.000167 | 0.5541 +/- 0.1353 | 0.00% | 0.0131 |
 
 ## References
 
