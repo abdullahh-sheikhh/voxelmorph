@@ -124,7 +124,7 @@ scripts/cell_tracking/
 ├── dataset.py            # CellTrackingDataset — TIF loader, padding, normalization
 ├── train.py              # Training loop with loss curves (MSE or NCC, direct or diffeomorphic)
 ├── evaluate.py           # Evaluation with baselines + merged visualizations
-├── baselines.py          # Horn & Schunck optical flow
+├── horn_schunck.py          # Horn & Schunck optical flow
 ├── register.py           # Pairwise inference
 ├── track.py              # Cell tracking via mask propagation
 ├── train_colab.ipynb     # Full pipeline notebook for Google Colab (GPU)
@@ -133,13 +133,13 @@ scripts/cell_tracking/
 
 ## Results
 
-| Method | MSE | Dice | Folding % | Runtime (s/pair) |
-|--------|-----|------|-----------|------------------|
-| Horn & Schunck | TBD | TBD | TBD | TBD |
-| VM-1 (MSE, direct) | TBD | TBD | TBD | TBD |
-| VM-2 (NCC, direct) | TBD | TBD | TBD | TBD |
-| VM-3 (MSE, diffeomorphic) | TBD | TBD | TBD | TBD |
-| VM-4 (NCC, diffeomorphic) | TBD | TBD | TBD | TBD |
+| Method | MSE | Dice | Runtime (s/pair) |
+|--------|-----|------|------------------|
+| Horn & Schunck | TBD | TBD | TBD |
+| VM-1 (MSE, direct) | TBD | TBD | TBD |
+| VM-2 (NCC, direct) | TBD | TBD | TBD |
+| VM-3 (MSE, diffeomorphic) | TBD | TBD | TBD |
+| VM-4 (NCC, diffeomorphic) | TBD | TBD | TBD |
 
 Results will be filled after running the full notebook on Colab.
 
