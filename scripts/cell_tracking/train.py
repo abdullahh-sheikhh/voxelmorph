@@ -30,6 +30,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 import neurite as ne
 
 import voxelmorph as vxm
@@ -66,6 +67,8 @@ def train_epoch(
     """
     model.train()
     total_loss = 0.0
+    total_sim = 0.0
+    total_reg = 0.0
     n_batches = 0
 
     for batch in dataloader:
@@ -91,9 +94,12 @@ def train_epoch(
         optimizer.step()
 
         total_loss += loss.item()
+        total_sim += img_loss.item()
+        total_reg += grad_loss.item()
         n_batches += 1
 
-    return total_loss / max(n_batches, 1)
+    n = max(n_batches, 1)
+    return total_loss / n, total_sim / n, total_reg / n
 
 
 def main():
@@ -197,10 +203,11 @@ def main():
 
     # Training loop
     best_loss = float('inf')
+    loss_history = {'total': [], 'similarity': [], 'regularization': []}
     print(f'\nTraining for {args.epochs} epochs...\n')
 
     for epoch in tqdm(range(1, args.epochs + 1), desc='Epochs'):
-        avg_loss = train_epoch(
+        avg_loss, avg_sim, avg_reg = train_epoch(
             model=model,
             dataloader=dataloader,
             optimizer=optimizer,
@@ -211,9 +218,14 @@ def main():
             negate_image_loss=negate_image_loss,
         )
 
+        loss_history['total'].append(avg_loss)
+        loss_history['similarity'].append(avg_sim)
+        loss_history['regularization'].append(avg_reg)
+
         # Log
         if epoch % 10 == 0 or epoch == 1:
-            print(f'Epoch {epoch}/{args.epochs} — Loss: {avg_loss:.6f}')
+            print(f'Epoch {epoch}/{args.epochs} — Loss: {avg_loss:.6f} '
+                  f'(similarity: {avg_sim:.6f}, regularization: {avg_reg:.6f})')
 
         # Periodic checkpoint
         if epoch % args.save_every == 0:
@@ -228,6 +240,25 @@ def main():
 
     # Final model
     torch.save(model.state_dict(), output_dir / 'final.pt')
+
+    # Save loss history
+    with open(output_dir / 'loss_history.json', 'w') as f:
+        json.dump(loss_history, f)
+
+    # Plot loss curves
+    epochs = range(1, args.epochs + 1)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(epochs, loss_history['total'], label='Total Loss', linewidth=2)
+    ax.plot(epochs, loss_history['similarity'], label=f'Similarity ({loss_name})', linewidth=1.5, alpha=0.8)
+    ax.plot(epochs, loss_history['regularization'], label='Regularization (Spatial Gradient)', linewidth=1.5, alpha=0.8)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.set_title(f'Training Loss Curve ({loss_name} + {lambda_param} * Spatial Gradient)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'loss_curve.png', dpi=150, bbox_inches='tight')
+    plt.close(fig)
 
     # Save training config for reproducibility
     config = {
@@ -245,6 +276,7 @@ def main():
 
     print(f'\nDone. Best loss: {best_loss:.6f}')
     print(f'Models saved to {output_dir}/')
+    print(f'Loss curve saved to {output_dir / "loss_curve.png"}')
 
 
 if __name__ == '__main__':

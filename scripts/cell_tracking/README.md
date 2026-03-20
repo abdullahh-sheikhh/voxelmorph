@@ -64,11 +64,7 @@ Target frame (t_n+1)─┘                                      │
 
 ## Baselines
 
-We compare VoxelMorph against classical deformation estimation methods:
-
-- **Identity**: no registration (source = warped). Lower bound for metrics.
-- **Horn & Schunck (1981)**: first variational optical flow. Minimizes brightness constancy + smoothness.
-- **TV-L1 (Zach et al., 2007)**: modern variational method with L1 data term and total variation regularization.
+We compare VoxelMorph against the classical Horn & Schunck.
 
 ## Usage
 
@@ -77,7 +73,7 @@ All commands run from the project root.
 ### Train
 
 ```bash
-python -m scripts.cell_tracking.train --data-dir dataset/train --epochs 250
+python -m scripts.cell_tracking.train --data-dir dataset/train --epochs 100
 ```
 
 Options:
@@ -88,6 +84,8 @@ Options:
 - `--lambda F` — regularization weight (default: 0.01 for MSE, 1.0 for NCC)
 - `--int-steps N` — 0=direct displacement, >0=diffeomorphic (default: 0)
 - `--output-dir DIR` — where to save models (default: output/)
+
+Outputs: `best.pt`, `final.pt`, `config.json`, `loss_history.json`, `loss_curve.png`
 
 ### Evaluate
 
@@ -100,9 +98,8 @@ python -m scripts.cell_tracking.evaluate \
     --max-pairs 0
 ```
 
-Runs VoxelMorph + baselines (Identity, Horn & Schunck, TV-L1) and outputs:
-- Per-pair visualizations (squared error, displacement field, Jacobian, mask contours)
-- Baseline comparison images (shared-scale SE maps for all methods)
+Runs VoxelMorph + Horn & Schunck baseline and outputs:
+- Per-pair visualizations: raw difference, squared error comparison across methods, cell contours
 - `metrics.json` with all results
 
 Use `--no-baselines` to skip classical methods.
@@ -125,11 +122,11 @@ scripts/cell_tracking/
 ├── README.md             # This file
 ├── __init__.py
 ├── dataset.py            # CellTrackingDataset — TIF loader, padding, normalization
-├── train.py              # Training loop (MSE or NCC loss, direct or diffeomorphic)
-├── evaluate.py           # Evaluation with baselines + visualizations
-├── baselines.py          # Identity, Horn & Schunck, TV-L1 optical flow
+├── train.py              # Training loop with loss curves (MSE or NCC, direct or diffeomorphic)
+├── evaluate.py           # Evaluation with baselines + merged visualizations
+├── baselines.py          # Horn & Schunck optical flow
 ├── register.py           # Pairwise inference
-├── track.py              # Cell tracking (auxiliary, not part of main pipeline)
+├── track.py              # Cell tracking via mask propagation
 ├── train_colab.ipynb     # Full pipeline notebook for Google Colab (GPU)
 └── requirements.txt      # Extra dependencies (imagecodecs)
 ```
@@ -138,15 +135,13 @@ scripts/cell_tracking/
 
 | Method | MSE | Dice | Folding % | Runtime (s/pair) |
 |--------|-----|------|-----------|------------------|
-| Identity | TBD | TBD | N/A | N/A |
 | Horn & Schunck | TBD | TBD | TBD | TBD |
-| TV-L1 | TBD | TBD | TBD | TBD |
-| VM-1 (MSE, direct) | 0.000317 +/- 0.000122 | 0.5305 +/- 0.1301 | 0.01% | 0.0102 |
-| VM-2 (NCC, direct) | 0.000351 +/- 0.000162 | 0.5112 +/- 0.1299 | 0.00% | 0.0102 |
-| VM-3 (MSE, diffeo) | 0.000326 +/- 0.000123 | 0.5321 +/- 0.1302 | 0.00% | 0.0126 |
-| VM-4 (NCC, diffeo) | 0.000402 +/- 0.000167 | 0.5541 +/- 0.1353 | 0.00% | 0.0131 |
+| VM-1 (MSE, direct) | TBD | TBD | TBD | TBD |
+| VM-2 (NCC, direct) | TBD | TBD | TBD | TBD |
+| VM-3 (MSE, diffeomorphic) | TBD | TBD | TBD | TBD |
+| VM-4 (NCC, diffeomorphic) | TBD | TBD | TBD | TBD |
 
-VoxelMorph numbers from 100 epochs. Baseline + 250-epoch numbers will be filled after next Colab run.
+Results will be filled after running the full notebook on Colab.
 
 ## References
 

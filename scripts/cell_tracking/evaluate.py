@@ -2,7 +2,7 @@
 Evaluate deformation estimation: VoxelMorph vs classical baselines.
 
 Metrics: MSE, Dice (with GT masks), Jacobian folding %, runtime.
-Baselines: Identity, Horn & Schunck, TV-L1.
+Baseline: Horn & Schunck (1981).
 
 Usage:
     python -m scripts.cell_tracking.evaluate \
@@ -24,9 +24,7 @@ from skimage import io
 
 import voxelmorph as vxm
 from scripts.cell_tracking.dataset import CellTrackingDataset
-from scripts.cell_tracking.baselines import (
-    identity_flow, horn_schunck, tvl1_flow, warp_image,
-)
+from scripts.cell_tracking.baselines import horn_schunck, warp_image
 from scripts.cell_tracking.track import warp_mask
 
 
@@ -64,7 +62,6 @@ def load_gt_mask(gt_dir, frame_idx):
     return io.imread(str(mask_path)).astype(np.int32)
 
 
-
 def eval_displacement(src_np, tgt_np, displacement, warped, src_mask, tgt_mask):
     """Compute all metrics for a single displacement field."""
     mse = float(np.mean((tgt_np - warped) ** 2))
@@ -83,94 +80,78 @@ def eval_displacement(src_np, tgt_np, displacement, warped, src_mask, tgt_mask):
 
 # -- Visualization --
 
-def visualize_pair(source, target, warped, displacement, save_path, pair_idx,
-                   src_mask=None, tgt_mask=None):
-    """2x3 grid: images on top, analysis on bottom."""
+def visualize_registration(source, target, vxm_disp, method_warps,
+                           save_path, pair_idx, src_mask=None, tgt_mask=None):
+    """
+    Single 2x3 figure comparing registration methods.
+
+    Top row: Source, Target, Raw Difference (with quiver arrows)
+    Bottom row: Horn & Schunck Squared Error, TV-L1 Squared Error, VoxelMorph Squared Error
+    """
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
-    # Top row: source, target, warped
-    for ax, img, title in [
-        (axes[0, 0], source, 'Source (moving)'),
-        (axes[0, 1], target, 'Target (fixed)'),
-        (axes[0, 2], warped, 'Warped Source'),
-    ]:
-        ax.imshow(img, cmap='gray', vmin=0, vmax=1)
-        ax.set_title(title)
-        ax.axis('off')
+    # -- Top row: the problem --
 
+    # Source with cell contours
+    axes[0, 0].imshow(source, cmap='gray', vmin=0, vmax=1)
+    axes[0, 0].set_title('Source (moving)')
+    axes[0, 0].axis('off')
     if src_mask is not None:
         axes[0, 0].contour(src_mask > 0, colors='cyan', linewidths=0.8, alpha=0.7)
-        axes[0, 2].contour(src_mask > 0, colors='cyan', linewidths=0.8, alpha=0.5)
+
+    # Target with cell contours
+    axes[0, 1].imshow(target, cmap='gray', vmin=0, vmax=1)
+    axes[0, 1].set_title('Target (fixed)')
+    axes[0, 1].axis('off')
     if tgt_mask is not None:
         axes[0, 1].contour(tgt_mask > 0, colors='lime', linewidths=0.8, alpha=0.7)
-        axes[0, 2].contour(tgt_mask > 0, colors='lime', linewidths=0.8, alpha=0.7)
 
-    # Bottom left: squared error
-    se = (target - warped) ** 2
-    im_se = axes[1, 0].imshow(se, cmap='inferno', vmin=0, vmax=max(se.max(), 0.01))
-    axes[1, 0].set_title(f'Squared Error (MSE={np.mean(se):.6f})')
-    axes[1, 0].axis('off')
-    fig.colorbar(im_se, ax=axes[1, 0], fraction=0.046, pad=0.04)
+    # Raw difference with quiver arrows showing VoxelMorph displacement
+    raw_diff = np.abs(target - source)
+    im_diff = axes[0, 2].imshow(raw_diff, cmap='inferno', vmin=0, vmax=max(raw_diff.max(), 0.01))
+    axes[0, 2].set_title(f'Raw Difference (MSE={np.mean((target - source)**2):.6f})')
+    axes[0, 2].axis('off')
+    fig.colorbar(im_diff, ax=axes[0, 2], fraction=0.046, pad=0.04)
 
-    # Bottom middle: displacement magnitude + quiver
-    dx, dy = displacement[0], displacement[1]
-    mag = np.sqrt(dx**2 + dy**2)
-    im_mag = axes[1, 1].imshow(mag, cmap='viridis')
-    axes[1, 1].set_title(f'Displacement (max={mag.max():.2f}px)')
-    axes[1, 1].axis('off')
-    fig.colorbar(im_mag, ax=axes[1, 1], fraction=0.046, pad=0.04, label='pixels')
+    # Quiver arrows for VoxelMorph displacement field
+    if vxm_disp is not None:
+        step = 20
+        H, W = source.shape
+        Y, X = np.mgrid[0:H:step, 0:W:step]
+        dx, dy = vxm_disp[0], vxm_disp[1]
+        axes[0, 2].quiver(X, Y, dx[::step, ::step], dy[::step, ::step],
+                          color='white', alpha=0.6, scale=50, width=0.003)
 
-    step = 20
-    H, W = source.shape
-    Y, X = np.mgrid[0:H:step, 0:W:step]
-    axes[1, 1].quiver(X, Y, dx[::step, ::step], dy[::step, ::step],
-                       color='white', alpha=0.6, scale=50, width=0.003)
+    # -- Bottom row: the solutions (shared colorbar) --
 
-    # Bottom right: Jacobian determinant
-    jac = compute_jacobian_determinant(displacement)
-    fold_pct = 100.0 * np.sum(jac <= 0) / jac.size
-    spread = max(np.abs(jac - 1.0).max(), 0.05)
-    im_jac = axes[1, 2].imshow(jac, cmap='RdBu_r', vmin=1 - spread, vmax=1 + spread)
-    axes[1, 2].set_title(f'Jacobian Det (folding: {fold_pct:.2f}%)')
-    axes[1, 2].axis('off')
-    fig.colorbar(im_jac, ax=axes[1, 2], fraction=0.046, pad=0.04)
+    # Compute all squared error maps
+    se_maps = {}
+    for name, warped in method_warps.items():
+        se_maps[name] = (target - warped) ** 2
 
-    plt.suptitle(f'Pair {pair_idx}', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(save_path / f'pair_{pair_idx:04d}.png', dpi=100, bbox_inches='tight')
-    plt.close(fig)
-
-
-def visualize_comparison(source, target, method_warps, save_path, pair_idx):
-    """Side-by-side squared error maps for all methods (shared colorbar)."""
-    n = len(method_warps)
-    fig, axes = plt.subplots(2, max(n, 2), figsize=(5 * max(n, 2), 10))
-
-    axes[0, 0].imshow(source, cmap='gray', vmin=0, vmax=1)
-    axes[0, 0].set_title('Source')
-    axes[0, 0].axis('off')
-
-    axes[0, 1].imshow(target, cmap='gray', vmin=0, vmax=1)
-    axes[0, 1].set_title('Target')
-    axes[0, 1].axis('off')
-
-    for j in range(2, max(n, 2)):
-        axes[0, j].axis('off')
-
-    # Shared scale across all SE maps
-    se_maps = {name: (target - w) ** 2 for name, w in method_warps.items()}
+    # Shared scale across all methods
     vmax = max(se.max() for se in se_maps.values())
     vmax = max(vmax, 0.01)
 
-    for j, (name, se) in enumerate(se_maps.items()):
+    method_order = ['Horn & Schunck Squared Error', 'VoxelMorph Squared Error']
+    for j, name in enumerate(method_order):
+        if name not in se_maps:
+            axes[1, j].axis('off')
+            continue
+        se = se_maps[name]
         im = axes[1, j].imshow(se, cmap='inferno', vmin=0, vmax=vmax)
         axes[1, j].set_title(f'{name}\nMSE={np.mean(se):.6f}')
         axes[1, j].axis('off')
 
+    # Hide unused third cell in bottom row
+    axes[1, 2].axis('off')
+
+    # Single shared colorbar for the bottom row
     fig.colorbar(im, ax=axes[1, :].tolist(), fraction=0.02, pad=0.04)
-    plt.suptitle(f'Comparison - Pair {pair_idx}', fontsize=14, fontweight='bold')
+
+    plt.suptitle(f'Pair {pair_idx}', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(save_path / f'comparison_{pair_idx:04d}.png', dpi=100, bbox_inches='tight')
+    plt.savefig(save_path / f'pair_{pair_idx:04d}.png', dpi=100, bbox_inches='tight')
     plt.close(fig)
 
 
@@ -213,12 +194,17 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Method list
-    method_names = ['identity', 'horn_schunck', 'tvl1', 'vxm'] if use_baselines else ['vxm']
+    # Methods to evaluate
+    method_names = ['horn_schunck', 'vxm'] if use_baselines else ['vxm']
     metrics = {m: {'mse': [], 'dice': [], 'runtime': [], 'folding': []} for m in method_names}
 
-    baseline_fns = {'identity': identity_flow, 'horn_schunck': horn_schunck, 'tvl1': tvl1_flow}
-    display = {'identity': 'Identity', 'horn_schunck': 'Horn & Schunck', 'tvl1': 'TV-L1', 'vxm': 'VoxelMorph'}
+    baseline_fns = {'horn_schunck': horn_schunck}
+    display_names = {
+        'horn_schunck': 'Horn & Schunck',
+        'vxm': 'VoxelMorph',
+    }
+
+    print(f'\nEvaluating {n_pairs} pairs...\n')
 
     with torch.no_grad():
         for i in range(n_pairs):
@@ -237,7 +223,7 @@ def main():
                 src_mask = load_gt_mask(gt_dir, int(sp.stem[1:]))
                 tgt_mask = load_gt_mask(gt_dir, int(tp.stem[1:]))
 
-            # VoxelMorph
+            # VoxelMorph inference
             t0 = time.time()
             displacement, warped_source = model(
                 source, target, return_warped_source=True, return_field_type='displacement',
@@ -257,7 +243,7 @@ def main():
                 metrics['vxm']['dice'].append(vxm_res['dice'])
 
             # Baselines
-            warps = {'VoxelMorph': warp_np}
+            warps = {'VoxelMorph Squared Error': warp_np}
             if use_baselines:
                 for key, fn in baseline_fns.items():
                     t0 = time.time()
@@ -273,32 +259,32 @@ def main():
                     if bl_res['dice'] is not None:
                         metrics[key]['dice'].append(bl_res['dice'])
 
-                    warps[display[key]] = bl_warped
+                    warps[f'{display_names[key]} Squared Error'] = bl_warped
 
             # Visualize first 5 pairs
             if i < 5:
-                visualize_pair(src_np, tgt_np, warp_np, disp_np, output_dir, i,
-                               src_mask=src_mask, tgt_mask=tgt_mask)
-                if use_baselines:
-                    ordered = {n: warps[n] for n in ['Identity', 'Horn & Schunck', 'TV-L1', 'VoxelMorph'] if n in warps}
-                    visualize_comparison(src_np, tgt_np, ordered, output_dir, i)
+                visualize_registration(
+                    src_np, tgt_np, disp_np, warps, output_dir, i,
+                    src_mask=src_mask, tgt_mask=tgt_mask,
+                )
 
-            print(f'  Pair {i}: VxM MSE={vxm_res["mse"]:.6f}', end='')
-            if use_baselines:
-                print(f', Identity={metrics["identity"]["mse"][-1]:.6f}', end='')
-            print()
+            # Log
+            log = f'  Pair {i}: VoxelMorph MSE={vxm_res["mse"]:.6f}'
+            if vxm_res['dice'] is not None:
+                log += f', Dice={vxm_res["dice"]:.4f}'
+            print(log)
 
     # Summary table
-    print('\nResults:')
+    print(f'\n--- Results ({n_pairs} pairs) ---')
     for m in method_names:
-        name = display[m]
-        mse = f'{np.mean(metrics[m]["mse"]):.6f} +/- {np.std(metrics[m]["mse"]):.6f}'
-        dice = 'N/A'
+        name = display_names[m]
+        mse_str = f'{np.mean(metrics[m]["mse"]):.6f} +/- {np.std(metrics[m]["mse"]):.6f}'
+        dice_str = 'N/A'
         if metrics[m]['dice']:
-            dice = f'{np.mean(metrics[m]["dice"]):.4f} +/- {np.std(metrics[m]["dice"]):.4f}'
-        fold = f'{np.mean(metrics[m]["folding"]):.2f}%'
-        rt = f'{np.mean(metrics[m]["runtime"]):.4f}s' if metrics[m]['runtime'] else 'N/A'
-        print(f'  {name}: MSE={mse}, Dice={dice}, Folding={fold}, Runtime={rt}')
+            dice_str = f'{np.mean(metrics[m]["dice"]):.4f} +/- {np.std(metrics[m]["dice"]):.4f}'
+        fold_str = f'{np.mean(metrics[m]["folding"]):.2f}%'
+        rt_str = f'{np.mean(metrics[m]["runtime"]):.4f}s' if metrics[m]['runtime'] else 'N/A'
+        print(f'  {name}: MSE={mse_str}, Dice={dice_str}, Folding={fold_str}, Runtime={rt_str}')
 
     # Save to JSON
     results = {'n_pairs': n_pairs, 'device': device}

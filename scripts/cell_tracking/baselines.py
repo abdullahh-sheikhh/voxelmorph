@@ -1,10 +1,7 @@
 """
-Baseline optical flow methods for comparison with VoxelMorph.
+Classical optical flow baseline for comparison with VoxelMorph.
 
-Implements classical deformation estimation algorithms:
-- Identity (no registration)
-- Horn & Schunck (1981) — first variational optical flow
-- TV-L1 (Zach et al., 2007) — modern variational optical flow
+Horn & Schunck (1981) — first variational optical flow method.
 
 All functions return displacement fields in VoxelMorph convention:
     disp[0] = dx (horizontal), disp[1] = dy (vertical), shape (2, H, W)
@@ -12,11 +9,6 @@ All functions return displacement fields in VoxelMorph convention:
 
 import numpy as np
 from scipy.ndimage import map_coordinates, uniform_filter
-
-
-def identity_flow(source: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """No registration — zero displacement field."""
-    return np.zeros((2, *source.shape), dtype=np.float32)
 
 
 def horn_schunck(
@@ -68,26 +60,6 @@ def horn_schunck(
         v = v_avg - Iy * P / denom
 
     return np.stack([u, v], axis=0).astype(np.float32)
-
-
-def tvl1_flow(source: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """
-    TV-L1 optical flow via scikit-image.
-
-    Modern variational method (Zach et al., 2007) with L1 data term
-    and total variation regularization.
-
-    Returns
-    -------
-    np.ndarray
-        Displacement field (2, H, W): disp[0]=dx, disp[1]=dy.
-    """
-    from skimage.registration import optical_flow_tvl1
-
-    # skimage returns (flow_v, flow_u) = (dy, dx)
-    flow = optical_flow_tvl1(target, source)
-    # Convert to VoxelMorph convention: disp[0]=dx, disp[1]=dy
-    return np.stack([flow[1], flow[0]], axis=0).astype(np.float32)
 
 
 def warp_image(image: np.ndarray, displacement: np.ndarray) -> np.ndarray:
