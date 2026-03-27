@@ -64,7 +64,7 @@ Target frame (t_n+1)─┘                                      │
 
 ## Baselines
 
-We compare VoxelMorph against the classical Horn & Schunck.
+We compare VoxelMorph against the classical Horn & Schunck optical flow (multi-scale pyramid implementation from Sorbonne Lip6 lab, based on Meinhardt-Llopis & Sanchez 2013).
 
 ## Usage
 
@@ -99,8 +99,8 @@ python -m scripts.cell_tracking.evaluate \
 ```
 
 Runs VoxelMorph + Horn & Schunck baseline and outputs:
-- Per-pair visualizations: raw difference, squared error comparison across methods, cell contours
-- `metrics.json` with all results
+- Per-pair visualizations: Jacobian determinant map, displacement magnitude, Dice alignment overlay, cell contours
+- `metrics.json` with Dice, Jacobian determinant, and runtime results
 
 Use `--no-baselines` to skip classical methods.
 
@@ -133,8 +133,10 @@ scripts/cell_tracking/
 
 ## Results
 
-| Method | MSE | Dice | Runtime (s/pair) |
-|--------|-----|------|------------------|
+Evaluation metrics follow the VoxelMorph paper (Balakrishnan et al., IEEE TMI 2019, Table I).
+
+| Method | Dice | |Jφ| ≤ 0 (%) | Runtime (s/pair) |
+|--------|------|-------------|------------------|
 | Horn & Schunck | TBD | TBD | TBD |
 | VM-1 (MSE, direct) | TBD | TBD | TBD |
 | VM-2 (NCC, direct) | TBD | TBD | TBD |
