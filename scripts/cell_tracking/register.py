@@ -44,7 +44,7 @@ def load_and_pad(path: str, pad_to: tuple[int, int] = (544, 704)) -> tuple[torch
     return torch.from_numpy(img).unsqueeze(0).unsqueeze(0), original_shape
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description='Register two 2D TIF images with a trained VoxelMorph model'
     )

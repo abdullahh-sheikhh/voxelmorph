@@ -99,8 +99,8 @@ python -m scripts.cell_tracking.evaluate \
 ```
 
 Runs VoxelMorph + Horn & Schunck baseline and outputs:
-- Per-pair visualizations: Jacobian determinant map, displacement magnitude, Dice alignment overlay, cell contours
-- `metrics.json` with Dice, Jacobian determinant, and runtime results
+- Per-pair visualizations: masked Jacobian determinant (cell regions only), displacement magnitude, Dice alignment overlay
+- `metrics.json` with Dice, Jacobian determinant, per-cell deformation statistics, and runtime results
 
 Use `--no-baselines` to skip classical methods.
 
@@ -135,13 +135,13 @@ scripts/cell_tracking/
 
 Evaluation metrics follow the VoxelMorph paper (Balakrishnan et al., IEEE TMI 2019, Table I).
 
-| Method | Dice | |Jφ| ≤ 0 (%) | Runtime (s/pair) |
-|--------|------|-------------|------------------|
-| Horn & Schunck | TBD | TBD | TBD |
-| VM-1 (MSE, direct) | TBD | TBD | TBD |
-| VM-2 (NCC, direct) | TBD | TBD | TBD |
-| VM-3 (MSE, diffeomorphic) | TBD | TBD | TBD |
-| VM-4 (NCC, diffeomorphic) | TBD | TBD | TBD |
+| Method | Dice | |Jφ| ≤ 0 in cells (%) | Mean Jacobian in cells | Runtime (s/pair) |
+|--------|------|---------------------|----------------------|------------------|
+| Horn & Schunck | TBD | TBD | TBD | TBD |
+| VM-1 (MSE, direct) | TBD | TBD | TBD | TBD |
+| VM-2 (NCC, direct) | TBD | TBD | TBD | TBD |
+| VM-3 (MSE, diffeomorphic) | TBD | TBD | TBD | TBD |
+| VM-4 (NCC, diffeomorphic) | TBD | TBD | TBD | TBD |
 
 Results will be filled after running the full notebook on Colab.
 

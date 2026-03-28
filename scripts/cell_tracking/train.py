@@ -46,7 +46,7 @@ def train_epoch(
     loss_weights: Sequence[float],
     device: str = 'cuda',
     negate_image_loss: bool = False,
-) -> float:
+) -> tuple[float, float, float]:
     """
     model : nn.Module
         VxmPairwise model.
@@ -64,6 +64,11 @@ def train_epoch(
         Device to train on.
     negate_image_loss : bool
         If True, negate the image loss (for NCC which returns similarity).
+
+    Returns
+    -------
+    tuple[float, float, float]
+        Average total loss, average similarity loss, average regularization loss.
     """
     model.train()
     total_loss = 0.0
@@ -102,7 +107,7 @@ def train_epoch(
     return total_loss / n, total_sim / n, total_reg / n
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description='Train VoxelMorph for 2D cell tracking registration'
     )
