@@ -216,11 +216,6 @@ def main() -> None:
     # Data
     parser.add_argument('--data-dir', type=str, default='dataset/train',
                         help='Path to training data directory')
-    parser.add_argument('--sequences', nargs='+', default=['01', '02'],
-                        help='Sequence folders to use (default: 01 02)')
-    parser.add_argument('--pairing', type=str, default='consecutive',
-                        choices=['consecutive', 'random'],
-                        help='Frame pairing strategy (default: consecutive)')
 
     # Model
     parser.add_argument('--nb-features', nargs='+', type=int,
@@ -241,8 +236,6 @@ def main() -> None:
                         help='Learning rate (paper default: 1e-4)')
     parser.add_argument('--lambda', type=float, dest='lambda_param', default=None,
                         help='Regularization weight (default: 0.01 for MSE, 1.0 for NCC)')
-    parser.add_argument('--workers', type=int, default=0,
-                        help='DataLoader workers')
     parser.add_argument('--mask-weight', type=float, default=1.0,
                         help='Weight alpha for binary mask Dice loss (default: 1.0, 0 to disable)')
     parser.add_argument('--int-weight', type=float, default=0.1,
@@ -264,17 +257,15 @@ def main() -> None:
     use_masks = args.mask_weight > 0.0 or args.int_weight > 0.0
     dataset = CellTrackingDataset(
         data_dir=args.data_dir,
-        sequences=args.sequences,
-        pairing=args.pairing,
         use_masks=use_masks,
     )
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.workers,
+        num_workers=0,
     )
-    print(f'Dataset: {len(dataset)} pairs from sequences {args.sequences}')
+    print(f'Dataset: {len(dataset)} pairs')
 
     # Model — 2D VxmPairwise
     model = vxm.nn.models.VxmPairwise(
