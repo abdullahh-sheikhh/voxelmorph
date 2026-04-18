@@ -4,6 +4,27 @@ A personal reference covering the research paper, the codebase, and the dataset.
 
 ---
 
+## Current Project Direction
+
+For the cell-tracking work in this repository, the active direction is:
+
+- adapt the VoxelMorph family to the PhC-C2DH-U373 dataset
+- compare against Horn & Schunck as the classical baseline
+- keep the implementation simple
+- use a sequence-based train/test split instead of evaluating on the same data used for training
+- keep the 2x2 comparison:
+  - MSE + direct
+  - NCC + direct
+  - MSE + diffeomorphic
+  - NCC + diffeomorphic
+- keep mask-guided training as the main mode
+- add optional unsupervised training as a lightweight comparison
+- use 150 epochs as the standard run length for the current experiments
+
+The current priority is not a full validation framework or a heavy refactor. The priority is a clean and fair comparison pipeline on the cell dataset.
+
+---
+
 ## 1. The Paper: VoxelMorph (Balakrishnan et al., IEEE TMI 2019)
 
 ### The Problem
@@ -95,6 +116,14 @@ This guarantees the deformation is smooth, invertible, and doesn't create foldin
 2. **Sparse labels** (Section V-G): Even with a single labeled structure, training with auxiliary Dice loss improves results without hurting unobserved structures. Our ~10 sparse segmentation masks per sequence can be leveraged.
 3. **Amortized optimization** (Section IV-D): The shared network parameters act as implicit regularization. Even with λ=0, results improve over affine — global function learning naturally regularizes.
 4. **Subject-to-subject** (Section V-F): When registering pairs with more variability, doubling feature counts helps. If random pairing produces poor results, increase features.
+
+For this repo, that translates into a pragmatic working setup:
+
+- use Horn & Schunck as the external baseline
+- keep MSE and NCC both in the comparison
+- keep direct and diffeomorphic variants both in the comparison
+- compare on a held-out sequence rather than on the same sequence used for fitting
+- optionally compare mask-guided and unsupervised training with the same backbone
 
 ---
 

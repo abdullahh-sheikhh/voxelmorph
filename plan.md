@@ -2,90 +2,98 @@
 
 ## Goal
 
-Use VoxelMorph to learn displacement fields between consecutive cell microscopy frames, then use those displacement fields to study how cells deform over time. Compare against Horn & Schunck classical optical flow as baseline.
+Adapt the VoxelMorph registration family to the PhC-C2DH-U373 cell dataset and compare it against Horn & Schunck optical flow.
 
-## Pipeline
+The goal is pragmatic:
+
+- get strong registration results on the cell dataset
+- keep the code simple
+- compare learned registration against Horn & Schunck fairly
+- use a simple train/test split by sequence instead of training and evaluating on the same pairs
+
+## Current Decisions
+
+- **Baseline**: Horn & Schunck
+- **Main learned model**: `VxmPairwise` with `ndim=2`
+- **Comparison structure**: 2x2 grid
+  - MSE + direct displacement
+  - NCC + direct displacement
+  - MSE + diffeomorphic
+  - NCC + diffeomorphic
+- **Training modes**:
+  - mask-guided training as the main mode
+  - optional unsupervised training as a lightweight comparison
+- **Data split**:
+  - keep it simple
+  - use sequence-based splitting, e.g. train on `01`, evaluate on `02`
+- **Validation**: skipped for now
+- **Epoch budget**: 150 as the new standard run length
+
+## Minimal Pipeline
 
 ```
-TIF frame pairs (PhC-C2DH-U373)
+PhC-C2DH-U373 frame pairs
     │
-    ├── Train VxmPairwise (MSE/NCC + SpatialGradient)
-    │       → displacement field per pair
+    ├── Train VoxelMorph on selected training sequences
+    │       ├── mask-guided mode
+    │       └── optional unsupervised mode
     │
-    ├── Horn & Schunck baseline (Lip6 multi-scale)
-    │       → displacement field per pair
+    ├── Evaluate on held-out sequences
+    │       ├── Dice
+    │       ├── Masked MSE
+    │       └── Runtime
     │
-    ├── Evaluate accuracy
-    │       → Dice score (cell mask overlap)
-    │       → Jacobian determinant within cell regions (deformation quality)
-    │       → Runtime comparison
-    │
-    └── Study cell deformations
-            → Per-cell Jacobian statistics (expansion vs compression)
-            → Masked deformation maps (color-coded per cell)
-            → VoxelMorph vs Horn & Schunck deformation comparison
+    └── Compare against Horn & Schunck
 ```
 
-## Completed Steps
+## Current Implementation Direction
 
-### 1. Data loading (`dataset.py`)
-- Loads TIF pairs from sequences 01 and 02
-- Pads to 704x544, normalizes to 0-1
-- Consecutive frame pairing
+### 1. Dataset handling
+- Keep the current consecutive-pair loader
+- Make sequence selection explicit and easy to use for train/test splitting
 
-### 2. Training (`train.py`)
-- VxmPairwise with ndim=2, nb_features=[16, 32, 32, 32]
-- MSE or NCC training loss + SpatialGradient regularization
-- Saves best.pt, final.pt, config.json, loss curves
+### 2. Training
+- Keep current mask-guided loss as the default
+- Add an optional unsupervised mode with minimal branching
+- Update defaults/examples to 150 epochs
+- Keep logging simple and avoid misleading `Dice` wording when the logged value is actually `1 - Dice`
 
-### 3. Horn & Schunck baseline (`horn_schunck.py`)
-- Replaced simple version with Lip6 lab's multi-scale implementation
-- API: `hs_optical_flow(reference, moving, alpha)` and `warp(image, flow)`
-- Axis convention: flow[0]=y, flow[1]=x (differs from VoxelMorph)
+### 3. Evaluation
+- Evaluate on selected sequences only
+- Use the same held-out split for both VoxelMorph and Horn & Schunck
+- Keep metrics limited to what the current code really computes:
+  - Dice
+  - MaskedMSE
+  - runtime
 
-### 4. Evaluation rewrite (`evaluate.py`)
-- Dice as primary metric (not MSE — MSE is training loss only, per paper Table I)
-- Jacobian determinant (currently full image — needs masking to cell regions)
-- Horn & Schunck axis swap handled: `hs_disp[[1, 0]]` before VoxelMorph-convention functions
-- Runtime comparison
+## Not In Scope Right Now
 
-### 5. Notebook update (`train_colab.ipynb`)
-- Comparison table reads new JSON format (Dice, Jacobian, runtime)
-- Corrupted Unicode fixed
-- Markdown descriptions updated
+- validation pipeline
+- early stopping
+- large training framework changes
+- Jacobian/per-cell deformation analysis as the main priority
 
-## Current Step — Cell Deformation Analysis
+Those can be added later if the core split-and-compare pipeline works well.
 
-### What needs to happen in evaluate.py:
+## Expected Experiment Set
 
-1. **Mask Jacobian to cell regions** — compute only where segmentation mask > 0
-   - Background is ~95% of image, trivially Jacobian ~1.0
-   - Masking gives meaningful per-cell deformation numbers
+### Main 2x2 runs
 
-2. **Per-cell deformation statistics** — for each cell label:
-   - Mean Jacobian (overall expansion or compression?)
-   - Percentage of cell pixels expanding (Jacobian > 1)
-   - Percentage of cell pixels compressing (Jacobian < 1)
+| Variant | Similarity | Transform |
+|--------|------------|-----------|
+| VM-1 | MSE | direct |
+| VM-2 | NCC | direct |
+| VM-3 | MSE | diffeomorphic |
+| VM-4 | NCC | diffeomorphic |
 
-3. **Remove contours from visualization** — they do not represent anything we compute
+### Optional extra comparison
 
-4. **Masked deformation visualization** — show Jacobian color map only within cell regions
-   - Red = compression (<1), white = no change (=1), blue = expansion (>1)
+- unsupervised MSE
+- unsupervised NCC
 
-5. **Update JSON output** — include per-cell deformation stats for both methods
+## Success Criteria
 
-## Future Steps
-
-### Run experiments on Colab
-- Run full notebook with all 4 variants (VM-1 through VM-4)
-- Fill results table in README.md
-
-### Results table format
-
-| Method | Dice | |Jφ| ≤ 0 in cells (%) | Mean Jacobian in cells | Runtime (s/pair) |
-|--------|------|---------------------|----------------------|------------------|
-| Horn & Schunck | ? | ? | ? | ? |
-| VM-1 (MSE, direct) | ? | ? | ? | ? |
-| VM-2 (NCC, direct) | ? | ? | ? | ? |
-| VM-3 (MSE, diffeomorphic) | ? | ? | ? | ? |
-| VM-4 (NCC, diffeomorphic) | ? | ? | ? | ? |
+- the code supports a simple sequence-based split
+- the current 2x2 experiments are easy to rerun
+- Horn & Schunck and VoxelMorph are evaluated on the same held-out sequence(s)
+- documentation reflects the actual code and experiment setup

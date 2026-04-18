@@ -15,6 +15,7 @@ Usage:
         --model output/best.pt \
         --data-dir dataset/train \
         --gt-dir dataset/train \
+        --sequences 02 \
         --output-dir output/eval
 """
 
@@ -313,7 +314,7 @@ def main() -> None:
     parser.add_argument('--gt-dir', type=str, required=True,
                         help='Path to dataset root containing {seq}_ST/SEG/ directories')
     parser.add_argument('--sequences', nargs='+', default=['01', '02'],
-                        help='Sequence IDs to evaluate')
+                        help='Sequence IDs to evaluate, e.g. 02 for held-out testing')
     parser.add_argument('--output-dir', type=str, default='output/eval',
                         help='Directory to save evaluation results')
     parser.add_argument('--int-steps', type=int, default=0,
@@ -343,6 +344,7 @@ def main() -> None:
     )
 
     use_baselines = not args.no_baselines
+    print(f'Sequences: {args.sequences}')
     print(f'Pairs: {number_of_pairs}, Baselines: {use_baselines}')
 
     output_directory = Path(args.output_dir)

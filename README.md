@@ -164,9 +164,11 @@ lives in `scripts/cell_tracking/` — no original VoxelMorph files are modified.
 
 - **Dataset**: Glioblastoma-astrocytoma U373 cells, 696x520 px, 8-bit grayscale, 15 min/frame
 - **Model**: VxmPairwise(ndim=2, features=[16,32,32,32]), 83K parameters
-- **Losses**: MSE or NCC + SpatialGradient regularization
-- **Evaluation**: MSE, Dice score (on GT segmentation masks), Jacobian regularity
-- **Training**: ~13 min for 100 epochs on Colab T4
+- **Training modes**: mask-guided by default, optional unsupervised comparison
+- **Comparison**: Horn & Schunck baseline plus a 2x2 VoxelMorph comparison (MSE/NCC × direct/diffeomorphic)
+- **Evaluation**: Dice, MaskedMSE, runtime
+- **Split**: simple sequence-based train/test split, e.g. train on `01`, evaluate on `02`
+- **Training**: standard runs now target 150 epochs
 - **Colab notebook**: [`scripts/cell_tracking/train_colab.ipynb`](scripts/cell_tracking/train_colab.ipynb)
 
 See [`scripts/cell_tracking/README.md`](scripts/cell_tracking/README.md) for full details.

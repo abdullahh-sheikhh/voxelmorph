@@ -31,7 +31,9 @@ class CellTrackingDataset(Dataset):
         Root directory containing sequence folders (e.g., dataset/train/).
         Expected structure: data_dir/{01,02,...}/t000.tif, t001.tif, ...
     sequences : list of str, optional
-        Which sequence folders to use. Default is ['01', '02'].
+        Which sequence folders to use. This is the main mechanism for simple
+        train/test splitting, e.g. train on ['01'] and evaluate on ['02'].
+        Default is ['01', '02'].
     pad_to : tuple of int, optional
         Pad images to this (H, W) size. Default is (544, 704) which is
         divisible by 32 (required for 5-level UNet).

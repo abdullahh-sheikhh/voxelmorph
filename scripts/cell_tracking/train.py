@@ -14,8 +14,8 @@ Paper reference:
     IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019.
 
 Usage:
-    python -m scripts.cell_tracking.train --data-dir dataset/train --epochs 500
-    python -m scripts.cell_tracking.train --data-dir dataset/train --loss ncc --lambda 1.0 --epochs 500
+    python -m scripts.cell_tracking.train --data-dir dataset/train --sequences 01 --epochs 150
+    python -m scripts.cell_tracking.train --data-dir dataset/train --sequences 01 --loss ncc --lambda 1.0 --epochs 150
 """
 
 import os
@@ -103,28 +103,27 @@ def train_epoch(
     mask_warper: nn.Module | None = None,
     mask_weight: float = 1.0,
     int_mask_weight: float = 0.1,
+    unsupervised: bool = False,
 ) -> float:
     """
-    Run one training epoch, return mean mask_dice loss across batches.
+    Run one training epoch, return mean optimization metric across batches.
 
     Total loss per batch:
-        loss = mask_weight * soft_dice + int_mask_weight * img_loss + lambda_smooth * grad_loss
+        mask-guided:
+            loss = mask_weight * soft_dice + int_mask_weight * img_loss + lambda_smooth * grad_loss
 
-    Only mask_dice is returned for logging — the other terms are small and
-    dominated by mask_dice in practice.
+        unsupervised:
+            loss = img_loss + lambda_smooth * grad_loss
+
+    The returned scalar is the mean objective used for model selection/logging.
     """
     model.train()
-    total_mask = 0.0
+    total_metric = 0.0
     n_batches = 0
 
     for batch in dataloader:
         source = batch['source'].to(device)
         target = batch['target'].to(device)
-
-        source_binary = (batch['source_mask'].to(device) > 0).float()
-        target_binary = (batch['target_mask'].to(device) > 0).float()
-        union_binary = (source_binary + target_binary).clamp(0.0, 1.0)
-        cell_region = dilate_mask(union_binary, radius=10)
 
         optimizer.zero_grad()
 
@@ -134,23 +133,36 @@ def train_epoch(
             return_field_type='displacement',
         )
 
-        img_loss = image_loss_fn(target * cell_region, warped_source * cell_region)
+        if unsupervised:
+            img_loss = image_loss_fn(target, warped_source)
+        else:
+            source_binary = (batch['source_mask'].to(device) > 0).float()
+            target_binary = (batch['target_mask'].to(device) > 0).float()
+            union_binary = (source_binary + target_binary).clamp(0.0, 1.0)
+            cell_region = dilate_mask(union_binary, radius=10)
+            img_loss = image_loss_fn(target * cell_region, warped_source * cell_region)
+
         if negate_image_loss:
             img_loss = -img_loss
 
-        warped_mask = mask_warper(source_binary, displacement)
-        mask_loss = soft_dice_loss(warped_mask, target_binary)
-
         grad_loss = grad_loss_fn(displacement)
 
-        loss = mask_weight * mask_loss + int_mask_weight * img_loss + lambda_smooth * grad_loss
+        if unsupervised:
+            loss = img_loss + lambda_smooth * grad_loss
+            metric = loss
+        else:
+            warped_mask = mask_warper(source_binary, displacement)
+            mask_loss = soft_dice_loss(warped_mask, target_binary)
+            loss = mask_weight * mask_loss + int_mask_weight * img_loss + lambda_smooth * grad_loss
+            metric = mask_loss
+
         loss.backward()
         optimizer.step()
 
-        total_mask += mask_loss.item()
+        total_metric += metric.item()
         n_batches += 1
 
-    return total_mask / max(n_batches, 1)
+    return total_metric / max(n_batches, 1)
 
 
 def main() -> None:
@@ -160,11 +172,13 @@ def main() -> None:
 
     parser.add_argument('--data-dir', type=str, default='dataset/train',
                         help='Path to training data directory')
+    parser.add_argument('--sequences', nargs='+', default=['01', '02'],
+                        help='Sequence IDs to train on')
     parser.add_argument('--int-steps', type=int, default=0,
                         help='Integration steps (0=direct displacement, >0=diffeomorphic)')
     parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ncc'],
                         help='Image similarity loss (default: mse)')
-    parser.add_argument('--epochs', type=int, default=500,
+    parser.add_argument('--epochs', type=int, default=150,
                         help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='Batch size (paper default: 1)')
@@ -176,6 +190,8 @@ def main() -> None:
                         help='Weight alpha for binary mask Dice loss')
     parser.add_argument('--int-weight', type=float, default=0.1,
                         help='Weight beta for cell-restricted intensity loss')
+    parser.add_argument('--unsupervised', action='store_true',
+                        help='Disable mask Dice supervision and train with image loss + smoothness only')
     parser.add_argument('--output-dir', type=str, default='output',
                         help='Directory to save model checkpoints')
     parser.add_argument('--save-every', type=int, default=50,
@@ -184,7 +200,11 @@ def main() -> None:
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    dataset = CellTrackingDataset(data_dir=args.data_dir, use_masks=True)
+    dataset = CellTrackingDataset(
+        data_dir=args.data_dir,
+        sequences=args.sequences,
+        use_masks=not args.unsupervised,
+    )
     dataloader = DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True, num_workers=0,
     )
@@ -194,8 +214,10 @@ def main() -> None:
         nb_features=[16, 32, 32, 32], integration_steps=args.int_steps,
     ).to(device)
 
-    # Bilinear SpatialTransformer for differentiable mask warping during training.
-    mask_warper = vxm.nn.modules.SpatialTransformer(interpolation_mode='linear').to(device)
+    mask_warper = None
+    if not args.unsupervised:
+        # Bilinear SpatialTransformer for differentiable mask warping during training.
+        mask_warper = vxm.nn.modules.SpatialTransformer(interpolation_mode='linear').to(device)
 
     # NCC returns positive similarity (1.0 = perfect) — negate for minimization.
     if args.loss == 'ncc':
@@ -214,14 +236,17 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f'Device: {device}  |  Dataset: {len(dataset)} pairs  |  Loss: {args.loss.upper()}  '
+    training_mode = 'unsupervised' if args.unsupervised else 'mask-guided'
+    print(f'Device: {device}  |  Dataset: {len(dataset)} pairs  |  Sequences: {args.sequences}  '
+          f'|  Loss: {args.loss.upper()}  |  Mode: {training_mode}  '
           f'|  int_steps: {args.int_steps}  |  lambda: {lambda_smooth}\n')
 
-    best_mask_dice = float('inf')
-    mask_dice_history: list[float] = []
+    best_metric = float('inf')
+    metric_history: list[float] = []
+    metric_name = 'train_loss' if args.unsupervised else 'mask_dice_loss'
 
     for epoch in tqdm(range(1, args.epochs + 1), desc='Epochs'):
-        avg_mask = train_epoch(
+        avg_metric = train_epoch(
             model=model,
             dataloader=dataloader,
             optimizer=optimizer,
@@ -233,33 +258,35 @@ def main() -> None:
             mask_warper=mask_warper,
             mask_weight=args.mask_weight,
             int_mask_weight=args.int_weight,
+            unsupervised=args.unsupervised,
         )
-        mask_dice_history.append(avg_mask)
+        metric_history.append(avg_metric)
 
         if epoch % 10 == 0 or epoch == 1:
-            print(f'Epoch {epoch}/{args.epochs} — mask_dice: {avg_mask:.6f}')
+            print(f'Epoch {epoch}/{args.epochs} — {metric_name}: {avg_metric:.6f}')
 
         if epoch % args.save_every == 0:
             torch.save(model.state_dict(), output_dir / f'checkpoint_epoch{epoch}.pt')
 
-        if avg_mask < best_mask_dice:
-            best_mask_dice = avg_mask
+        if avg_metric < best_metric:
+            best_metric = avg_metric
             torch.save(model.state_dict(), output_dir / 'best.pt')
 
     torch.save(model.state_dict(), output_dir / 'final.pt')
 
-    # Loss curve — single line, the only signal we care about
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(range(1, args.epochs + 1), mask_dice_history, linewidth=2, color='#c0392b')
+    ax.plot(range(1, args.epochs + 1), metric_history, linewidth=2, color='#c0392b')
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('mask_dice (1 − Dice)')
-    ax.set_title(f'Training Loss Curve  ({args.loss.upper()}, int_steps={args.int_steps})')
+    ax.set_ylabel(metric_name)
+    ax.set_title(
+        f'Training Curve ({args.loss.upper()}, {training_mode}, int_steps={args.int_steps})'
+    )
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_dir / 'loss_curve.png', dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-    print(f'\nDone. Best mask_dice: {best_mask_dice:.6f}  →  Dice ≈ {1 - best_mask_dice:.4f}')
+    print(f'\nDone. Best {metric_name}: {best_metric:.6f}')
     print(f'Models and loss curve saved to {output_dir}/')
 
 
