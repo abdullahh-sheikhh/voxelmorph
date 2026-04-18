@@ -316,9 +316,6 @@ def main() -> None:
                         help='Sequence IDs to evaluate')
     parser.add_argument('--output-dir', type=str, default='output/eval',
                         help='Directory to save evaluation results')
-    parser.add_argument('--nb-features', nargs='+', type=int,
-                        default=[16, 32, 32, 32],
-                        help='UNet features (must match training)')
     parser.add_argument('--int-steps', type=int, default=0,
                         help='Integration steps (must match training)')
     parser.add_argument('--max-pairs', type=int, default=20,
@@ -332,7 +329,7 @@ def main() -> None:
 
     model = vxm.nn.models.VxmPairwise(
         ndim=2, source_channels=1, target_channels=1,
-        nb_features=args.nb_features, integration_steps=args.int_steps,
+        nb_features=[16, 32, 32, 32], integration_steps=args.int_steps,
     ).to(device)
     model.load_state_dict(torch.load(args.model, map_location=device, weights_only=True))
     model.eval()
