@@ -43,6 +43,34 @@ class PairMetrics:
     masked_mse: float | None
     runtime: float
 
+def jacobian_determinant(flow):
+    """
+    flow: numpy array of shape (2, H, W) — the displacement field
+    Returns: det_map of shape (H, W)
+    """
+    # flow[0] = u (x-displacement), flow[1] = v (y-displacement)
+    u = flow[0]  # H x W
+    v = flow[1]  # H x W
+
+    # Finite differences (gradients)
+    du_dx = np.gradient(u, axis=1)
+    du_dy = np.gradient(u, axis=0)
+    dv_dx = np.gradient(v, axis=1)
+    dv_dy = np.gradient(v, axis=0)
+
+    # Jacobian determinant: det(I + J_flow) for displacement field
+    # = (1 + du/dx)(1 + dv/dy) - (du/dy)(dv/dx)
+    det = (1 + du_dx) * (1 + dv_dy) - (du_dy * dv_dx)
+    return det
+
+def jacobian_metrics(flow):
+    det = jacobian_determinant(flow)
+    return {
+        'jac_det_mean': float(det.mean()),
+        'jac_det_std':  float(det.std()),
+        'jac_neg_frac': float((det <= 0).mean()),  # fraction of folded pixels
+    }
+
 
 def warp_mask(
     mask: np.ndarray,
@@ -352,7 +380,7 @@ def main() -> None:
 
     method_names = ['horn_schunck', 'vxm'] if use_baselines else ['vxm']
     metrics: dict[str, dict[str, list[float]]] = {
-        method: {'dice': [], 'masked_mse': [], 'runtime': []}
+        method: {'dice': [], 'masked_mse': [], 'runtime': [], 'jac_det': [], 'jac_neg_frac': []}
         for method in method_names
     }
 
@@ -386,6 +414,10 @@ def main() -> None:
             displacement_numpy = displacement[0].cpu().numpy()
             warped_numpy = warped_source[0, 0].cpu().numpy()
 
+            jac = jacobian_metrics(displacement_numpy)
+            metrics['vxm']['jac_det'].append(jac['jac_det_mean'])
+            metrics['vxm']['jac_neg_frac'].append(jac['jac_neg_frac'])
+
             vxm_result = evaluate_pair(
                 displacement_numpy, source_mask, target_mask,
                 warped_numpy, target_numpy, vxm_runtime,
@@ -408,7 +440,7 @@ def main() -> None:
                 # Swap axes: H&S [y, x] → VoxelMorph [x, y]
                 hs_displacement_vxm = hs_displacement[[1, 0]]
 
-                hs_result = evaluate_pair(
+                hs_result = evaluate_pair(a
                     hs_displacement_vxm, source_mask, target_mask,
                     hs_warped, target_numpy, hs_runtime,
                 )
@@ -417,6 +449,11 @@ def main() -> None:
                     metrics['horn_schunck']['dice'].append(hs_result.dice)
                 if hs_result.masked_mse is not None:
                     metrics['horn_schunck']['masked_mse'].append(hs_result.masked_mse)
+
+
+                hs_jac = jacobian_metrics(hs_displacement_vxm)
+                metrics['horn_schunck']['jac_det'].append(hs_jac['jac_det_mean'])
+                metrics['horn_schunck']['jac_neg_frac'].append(hs_jac['jac_neg_frac'])
 
             if i < 5:
                 visualize_registration(
@@ -464,6 +501,9 @@ def main() -> None:
         if metrics[method]['masked_mse']:
             results[method]['masked_mse_mean'] = float(np.mean(metrics[method]['masked_mse']))
             results[method]['masked_mse_std'] = float(np.std(metrics[method]['masked_mse']))
+        if metrics[method]['jac_det']:
+            results[method]['jac_det_mean'] = float(np.mean(metrics[method]['jac_det']))
+            results[method]['jac_neg_frac_mean'] = float(np.mean(metrics[method]['jac_neg_frac']))
 
     with open(output_directory / 'metrics.json', 'w') as json_file:
         json.dump(results, json_file, indent=2)
