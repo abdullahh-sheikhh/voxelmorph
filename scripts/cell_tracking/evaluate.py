@@ -440,7 +440,7 @@ def main() -> None:
                 # Swap axes: H&S [y, x] → VoxelMorph [x, y]
                 hs_displacement_vxm = hs_displacement[[1, 0]]
 
-                hs_result = evaluate_pair(a
+                hs_result = evaluate_pair(
                     hs_displacement_vxm, source_mask, target_mask,
                     hs_warped, target_numpy, hs_runtime,
                 )
