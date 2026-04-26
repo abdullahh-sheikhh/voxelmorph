@@ -213,8 +213,6 @@ def main() -> None:
                         help='Path to training data directory')
     parser.add_argument('--sequences', nargs='+', default=['01', '02'],
                         help='Sequence IDs to train on')
-    parser.add_argument('--int-steps', type=int, default=0,
-                        help='Integration steps (0=direct displacement, >0=diffeomorphic)')
     parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ncc'],
                         help='Image similarity loss (default: mse)')
     parser.add_argument('--epochs', type=int, default=150,
@@ -250,7 +248,7 @@ def main() -> None:
 
     model = vxm.nn.models.VxmPairwise(
         ndim=2, source_channels=1, target_channels=1,
-        nb_features=[16, 32, 32, 32], integration_steps=args.int_steps,
+        nb_features=[16, 32, 32, 32], integration_steps=0,
     ).to(device)
 
     mask_warper = None
@@ -260,7 +258,7 @@ def main() -> None:
 
     # NCC returns positive similarity (1.0 = perfect) — negate for minimization.
     if args.loss == 'ncc':
-        image_loss_fn = ne.nn.modules.NCC(window_size=15)
+        image_loss_fn = ne.nn.modules.NCC()
         negate_image_loss = True
         lambda_default = 1.0
     else:
@@ -278,7 +276,7 @@ def main() -> None:
     training_mode = 'unsupervised' if args.unsupervised else 'mask-guided'
     print(f'Device: {device}  |  Dataset: {len(dataset)} pairs  |  Sequences: {args.sequences}  '
           f'|  Loss: {args.loss.upper()}  |  Mode: {training_mode}  '
-          f'|  int_steps: {args.int_steps}  |  lambda: {lambda_smooth}\n')
+          f'|  lambda: {lambda_smooth}\n')
 
     best_metric = float('inf')
     metric_history: list[float] = []
@@ -318,7 +316,7 @@ def main() -> None:
     ax.set_xlabel('Epoch')
     ax.set_ylabel(metric_name)
     ax.set_title(
-        f'Training Curve ({args.loss.upper()}, {training_mode}, int_steps={args.int_steps})'
+        f'Training Curve ({args.loss.upper()}, {training_mode})'
     )
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
