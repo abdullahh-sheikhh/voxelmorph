@@ -81,10 +81,14 @@ class CellTrackingDataset(Dataset):
 
     def _load_mask(self, image_path: Path) -> torch.Tensor:
         """
-        Load the Silver Truth segmentation mask for a given image frame.
+        Load the segmentation mask for a given image frame.
 
-        Derives the ST mask path from the image path:
-            dataset/train/01/t005.tif  ->  dataset/train/01_ST/SEG/man_seg005.tif
+        Priority:
+            1. Gold Truth TRA  — {seq}_GT/TRA/man_track{n:03d}.tif
+               Tracking-consistent integer IDs, covers all 115 frames.
+            2. Silver Truth SEG — {seq}_ST/SEG/man_seg{n:03d}.tif
+               Fallback when GT/TRA is unavailable.
+            3. All-zeros tensor if neither path exists.
 
         Parameters
         ----------
@@ -95,22 +99,31 @@ class CellTrackingDataset(Dataset):
         -------
         torch.Tensor
             Shape (1, H, W), dtype float32, containing integer label IDs.
-            Padded to self.pad_to with zeros. Returns all-zeros if mask not found.
+            Padded to self.pad_to with zeros.
         """
         sequence = image_path.parent.name
         frame_index = int(image_path.stem[1:])
-        mask_path = (
+        pad_h, pad_w = self.pad_to
+
+        gt_tra_path = (
+            image_path.parent.parent
+            / f'{sequence}_GT'
+            / 'TRA'
+            / f'man_track{frame_index:03d}.tif'
+        )
+        st_seg_path = (
             image_path.parent.parent
             / f'{sequence}_ST'
             / 'SEG'
             / f'man_seg{frame_index:03d}.tif'
         )
 
-        pad_h, pad_w = self.pad_to
-
-        if not mask_path.exists():
+        if gt_tra_path.exists():
+            mask_path = gt_tra_path
+        elif st_seg_path.exists():
+            mask_path = st_seg_path
+        else:
             return torch.zeros(1, pad_h, pad_w, dtype=torch.float32)
-
         mask = io.imread(str(mask_path)).astype(np.float32)
 
         h, w = mask.shape

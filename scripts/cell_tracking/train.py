@@ -35,6 +35,45 @@ import voxelmorph as vxm
 from scripts.cell_tracking.dataset import CellTrackingDataset
 
 
+class _BorderSpatialTransformer(vxm.nn.modules.SpatialTransformer):
+    """SpatialTransformer that uses border (edge-replication) padding instead of zeros.
+
+    Used for mask warping only, so that cell labels near the image boundary are
+    replicated rather than set to zero, which would create artificial black halos
+    that bias the masked intensity loss.
+    """
+
+    def forward(
+        self,
+        moving_image: torch.Tensor,
+        deformation_field: torch.Tensor,
+    ) -> torch.Tensor:
+        spatial_shape = moving_image.shape[2:]
+        if (
+            not hasattr(self, 'meshgrid')
+            or self.meshgrid.shape[1:] != spatial_shape
+            or self.meshgrid.device != moving_image.device
+            or self.meshgrid.dtype != moving_image.dtype
+        ):
+            self.meshgrid = ne.volshape_to_ndgrid(
+                size=spatial_shape,
+                device=moving_image.device,
+                dtype=moving_image.dtype,
+                stack=True,
+            )
+
+        return vxm.spatial_transform(
+            image=moving_image,
+            trf=deformation_field,
+            mode=self.interpolation_mode,
+            isdisp=True,
+            meshgrid=self.meshgrid,
+            non_spatial_dims=(0, 1),
+            align_corners=self.align_corners,
+            padding_mode='border',
+        )
+
+
 def soft_dice_loss(
     prediction: torch.Tensor,
     target: torch.Tensor,
@@ -217,11 +256,11 @@ def main() -> None:
     mask_warper = None
     if not args.unsupervised:
         # Bilinear SpatialTransformer for differentiable mask warping during training.
-        mask_warper = vxm.nn.modules.SpatialTransformer(interpolation_mode='linear').to(device)
+        mask_warper = _BorderSpatialTransformer(interpolation_mode='linear').to(device)
 
     # NCC returns positive similarity (1.0 = perfect) — negate for minimization.
     if args.loss == 'ncc':
-        image_loss_fn = ne.nn.modules.NCC()
+        image_loss_fn = ne.nn.modules.NCC(window_size=15)
         negate_image_loss = True
         lambda_default = 1.0
     else:
