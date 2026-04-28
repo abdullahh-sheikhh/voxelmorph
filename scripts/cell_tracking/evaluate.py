@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import cv2
 from skimage import io
 
 import voxelmorph as vxm
@@ -303,6 +304,31 @@ def visualize_registration(
     plt.close(fig)
 
 
+def _cv2_flow_to_vxm(flow: np.ndarray) -> np.ndarray:
+    """Convert OpenCV dense flow (H, W, 2) to VoxelMorph displacement (2, H, W).
+
+    OpenCV convention: flow[..., 0] = x (col), flow[..., 1] = y (row).
+    VoxelMorph convention: displacement[0] = x, displacement[1] = y. Same order.
+    """
+    return np.stack([flow[..., 0], flow[..., 1]], axis=0)
+
+
+def _warp_image_cv2(image: np.ndarray, flow: np.ndarray) -> np.ndarray:
+    """Warp image (H, W) using OpenCV dense flow (H, W, 2). Returns (H, W)."""
+    h, w = image.shape
+    grid_x, grid_y = np.meshgrid(
+        np.arange(w, dtype=np.float32),
+        np.arange(h, dtype=np.float32),
+    )
+    return cv2.remap(
+        image,
+        grid_x + flow[..., 0],
+        grid_y + flow[..., 1],
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description='Evaluate VoxelMorph registration with Dice, masked MSE, and runtime'
@@ -348,11 +374,12 @@ def main() -> None:
     output_directory = Path(args.output_dir)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    method_names = ['horn_schunck', 'vxm'] if use_baselines else ['vxm']
+    method_names = ['horn_schunck', 'farneback', 'tvl1', 'vxm'] if use_baselines else ['vxm']
     metrics: dict[str, dict[str, list[float]]] = {
         method: {'dice': [], 'masked_mse': [], 'runtime': []}
         for method in method_names
     }
+    tvl1 = cv2.optflow.DualTVL1OpticalFlow_create() if use_baselines else None
 
     print(f'\nEvaluating {number_of_pairs} pairs...\n')
 
@@ -416,6 +443,45 @@ def main() -> None:
                 if hs_result.masked_mse is not None:
                     metrics['horn_schunck']['masked_mse'].append(hs_result.masked_mse)
 
+                src_uint8 = (source_numpy * 255).astype(np.uint8)
+                tgt_uint8 = (target_numpy * 255).astype(np.uint8)
+
+                # Farneback
+                time_start = time.time()
+                flow_fb = cv2.calcOpticalFlowFarneback(
+                    src_uint8, tgt_uint8, None,
+                    pyr_scale=0.5, levels=3, winsize=15,
+                    iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
+                )
+                fb_runtime = time.time() - time_start
+                fb_warped = _warp_image_cv2(source_numpy, flow_fb)
+                fb_disp = _cv2_flow_to_vxm(flow_fb)
+                fb_result = evaluate_pair(
+                    fb_disp, source_mask, target_mask,
+                    fb_warped, target_numpy, fb_runtime,
+                )
+                metrics['farneback']['runtime'].append(fb_result.runtime)
+                if fb_result.dice is not None:
+                    metrics['farneback']['dice'].append(fb_result.dice)
+                if fb_result.masked_mse is not None:
+                    metrics['farneback']['masked_mse'].append(fb_result.masked_mse)
+
+                # TV-L1
+                time_start = time.time()
+                flow_tvl1 = tvl1.calc(src_uint8, tgt_uint8, None)
+                tvl1_runtime = time.time() - time_start
+                tvl1_warped = _warp_image_cv2(source_numpy, flow_tvl1)
+                tvl1_disp = _cv2_flow_to_vxm(flow_tvl1)
+                tvl1_result = evaluate_pair(
+                    tvl1_disp, source_mask, target_mask,
+                    tvl1_warped, target_numpy, tvl1_runtime,
+                )
+                metrics['tvl1']['runtime'].append(tvl1_result.runtime)
+                if tvl1_result.dice is not None:
+                    metrics['tvl1']['dice'].append(tvl1_result.dice)
+                if tvl1_result.masked_mse is not None:
+                    metrics['tvl1']['masked_mse'].append(tvl1_result.masked_mse)
+
             if i < 5:
                 visualize_registration(
                     source_numpy, target_numpy, warped_numpy,
@@ -433,7 +499,12 @@ def main() -> None:
             print(log_line)
 
     print(f'\n--- Results ({number_of_pairs} pairs) ---')
-    display_names = {'horn_schunck': 'Horn & Schunck', 'vxm': 'VoxelMorph'}
+    display_names = {
+        'horn_schunck': 'Horn & Schunck',
+        'farneback': 'Farneback',
+        'tvl1': 'TV-L1',
+        'vxm': 'VoxelMorph',
+    }
     for method in method_names:
         name = display_names[method]
         dice_string = 'N/A'

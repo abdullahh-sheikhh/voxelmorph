@@ -32,6 +32,7 @@ import matplotlib.pyplot as plt
 import neurite as ne
 
 import voxelmorph as vxm
+from pytorch_msssim import SSIM
 from scripts.cell_tracking.dataset import CellTrackingDataset
 
 
@@ -213,7 +214,7 @@ def main() -> None:
                         help='Path to training data directory')
     parser.add_argument('--sequences', nargs='+', default=['01', '02'],
                         help='Sequence IDs to train on')
-    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ncc'],
+    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ncc', 'ssim'],
                         help='Image similarity loss (default: mse)')
     parser.add_argument('--epochs', type=int, default=150,
                         help='Number of training epochs')
@@ -256,9 +257,13 @@ def main() -> None:
         # Bilinear SpatialTransformer for differentiable mask warping during training.
         mask_warper = _BorderSpatialTransformer(interpolation_mode='linear').to(device)
 
-    # NCC returns positive similarity (1.0 = perfect) — negate for minimization.
+    # NCC and SSIM return positive similarity (1.0 = perfect) — negate for minimization.
     if args.loss == 'ncc':
         image_loss_fn = ne.nn.modules.NCC()
+        negate_image_loss = True
+        lambda_default = 1.0
+    elif args.loss == 'ssim':
+        image_loss_fn = SSIM(data_range=1.0, size_average=True, channel=1)
         negate_image_loss = True
         lambda_default = 1.0
     else:
