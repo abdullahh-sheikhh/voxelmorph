@@ -106,6 +106,42 @@ def soft_dice_loss(
     return 1.0 - dice.mean()
 
 
+class CombinedImageLoss(nn.Module):
+    """Weighted sum of image similarity losses.
+
+    Handles per-component sign: similarity losses (NCC, SSIM) that return
+    positive-is-good values are negated internally so the combined loss is
+    always minimised by gradient descent.
+
+    Parameters
+    ----------
+    loss_functions : list[nn.Module]
+        Individual loss or similarity callables, each taking (target, warped).
+    weights : list[float]
+        Per-component scalar weights.
+    negations : list[bool]
+        True for similarity losses (NCC, SSIM); False for error losses (MSE).
+    """
+
+    def __init__(
+        self,
+        loss_functions: list[nn.Module],
+        weights: list[float],
+        negations: list[bool],
+    ) -> None:
+        super().__init__()
+        self.loss_fns = nn.ModuleList(loss_functions)
+        self.weights = weights
+        self.negations = negations
+
+    def forward(self, target: torch.Tensor, warped: torch.Tensor) -> torch.Tensor:
+        total = target.new_zeros(())
+        for loss_fn, weight, negate in zip(self.loss_fns, self.weights, self.negations):
+            value = loss_fn(target, warped)
+            total = total + weight * (-value if negate else value)
+        return total
+
+
 def dilate_mask(binary_mask: torch.Tensor, radius: int = 10) -> torch.Tensor:
     """
     Morphological dilation of a binary mask via max pooling.
@@ -214,8 +250,15 @@ def main() -> None:
                         help='Path to training data directory')
     parser.add_argument('--sequences', nargs='+', default=['01', '02'],
                         help='Sequence IDs to train on')
-    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'ncc', 'ssim'],
-                        help='Image similarity loss (default: mse)')
+    parser.add_argument('--loss', type=str, default='mse',
+                        choices=['mse', 'ncc', 'ssim', 'ncc+ssim', 'mse+ncc+ssim'],
+                        help='Image similarity loss or combination (default: mse)')
+    parser.add_argument('--mse-weight', type=float, default=1.0,
+                        help='MSE component weight for combined losses')
+    parser.add_argument('--ncc-weight', type=float, default=1.0,
+                        help='NCC component weight for combined losses')
+    parser.add_argument('--ssim-weight', type=float, default=1.0,
+                        help='SSIM component weight for combined losses')
     parser.add_argument('--epochs', type=int, default=150,
                         help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=1,
@@ -258,6 +301,7 @@ def main() -> None:
         mask_warper = _BorderSpatialTransformer(interpolation_mode='linear').to(device)
 
     # NCC and SSIM return positive similarity (1.0 = perfect) — negate for minimization.
+    # CombinedImageLoss handles per-component negation internally, so negate_image_loss=False.
     if args.loss == 'ncc':
         image_loss_fn = ne.nn.modules.NCC()
         negate_image_loss = True
@@ -266,7 +310,30 @@ def main() -> None:
         image_loss_fn = SSIM(data_range=1.0, size_average=True, channel=1)
         negate_image_loss = True
         lambda_default = 1.0
-    else:
+    elif args.loss == 'ncc+ssim':
+        image_loss_fn = CombinedImageLoss(
+            loss_functions=[
+                ne.nn.modules.NCC(),
+                SSIM(data_range=1.0, size_average=True, channel=1),
+            ],
+            weights=[args.ncc_weight, args.ssim_weight],
+            negations=[True, True],
+        )
+        negate_image_loss = False
+        lambda_default = 1.0
+    elif args.loss == 'mse+ncc+ssim':
+        image_loss_fn = CombinedImageLoss(
+            loss_functions=[
+                ne.nn.modules.MSE(),
+                ne.nn.modules.NCC(),
+                SSIM(data_range=1.0, size_average=True, channel=1),
+            ],
+            weights=[args.mse_weight, args.ncc_weight, args.ssim_weight],
+            negations=[False, True, True],
+        )
+        negate_image_loss = False
+        lambda_default = 1.0
+    else:  # mse
         image_loss_fn = ne.nn.modules.MSE()
         negate_image_loss = False
         lambda_default = 0.01

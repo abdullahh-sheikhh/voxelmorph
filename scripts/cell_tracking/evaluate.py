@@ -379,7 +379,17 @@ def main() -> None:
         method: {'dice': [], 'masked_mse': [], 'runtime': []}
         for method in method_names
     }
-    tvl1 = cv2.optflow.DualTVL1OpticalFlow_create() if use_baselines else None
+    if use_baselines:
+        tvl1 = cv2.optflow.DualTVL1OpticalFlow_create()
+        tvl1.setLambda(0.10)          # default 0.15 — lower for sharper cell boundaries
+        tvl1.setTheta(0.20)           # default 0.30 — tighter u-v coupling, more precise
+        tvl1.setTau(0.25)             # keep — satisfies convergence condition τ ≤ 1/(8·θ)
+        tvl1.setScalesNumber(3)       # default 5  — reduce, cell motion < 5 px needs no deep pyramid
+        tvl1.setScaleStep(0.7)        # default 0.8 — slightly larger jumps between levels
+        tvl1.setWarpingsNumber(7)     # default 5  — more linearisation passes for halo regions
+        tvl1.setEpsilon(0.005)        # default 0.01 — tighter inner convergence
+    else:
+        tvl1 = None
 
     print(f'\nEvaluating {number_of_pairs} pairs...\n')
 
