@@ -75,6 +75,17 @@ class _BorderSpatialTransformer(vxm.nn.modules.SpatialTransformer):
         )
 
 
+class _Negated(nn.Module):
+    """Wraps a similarity loss (higher = better) to return its negation for minimization."""
+
+    def __init__(self, loss_fn: nn.Module) -> None:
+        super().__init__()
+        self.loss_fn = loss_fn
+
+    def forward(self, target: torch.Tensor, warped: torch.Tensor) -> torch.Tensor:
+        return -self.loss_fn(target, warped)
+
+
 def soft_dice_loss(
     prediction: torch.Tensor,
     target: torch.Tensor,
@@ -109,36 +120,35 @@ def soft_dice_loss(
 class CombinedImageLoss(nn.Module):
     """Weighted sum of image similarity losses.
 
-    Handles per-component sign: similarity losses (NCC, SSIM) that return
-    positive-is-good values are negated internally so the combined loss is
-    always minimised by gradient descent.
+    Wrap similarity losses (NCC, SSIM) in _Negated before passing them in so
+    the combined loss is always minimised by gradient descent.
 
     Parameters
     ----------
     loss_functions : list[nn.Module]
-        Individual loss or similarity callables, each taking (target, warped).
+        Individual loss callables, each taking (target, warped). Similarity
+        losses must already be wrapped in _Negated.
     weights : list[float]
         Per-component scalar weights.
-    negations : list[bool]
-        True for similarity losses (NCC, SSIM); False for error losses (MSE).
     """
 
     def __init__(
         self,
         loss_functions: list[nn.Module],
         weights: list[float],
-        negations: list[bool],
     ) -> None:
+        if not loss_functions:
+            raise ValueError("CombinedImageLoss requires at least one loss function.")
         super().__init__()
         self.loss_fns = nn.ModuleList(loss_functions)
         self.weights = weights
-        self.negations = negations
 
     def forward(self, target: torch.Tensor, warped: torch.Tensor) -> torch.Tensor:
-        total = target.new_zeros(())
-        for loss_fn, weight, negate in zip(self.loss_fns, self.weights, self.negations):
-            value = loss_fn(target, warped)
-            total = total + weight * (-value if negate else value)
+        it = zip(self.loss_fns, self.weights)
+        fn, w = next(it)
+        total = w * fn(target, warped)
+        for fn, w in it:
+            total = total + w * fn(target, warped)
         return total
 
 
@@ -175,7 +185,6 @@ def train_epoch(
     grad_loss_fn: nn.Module,
     lambda_smooth: float,
     device: str = 'cuda',
-    negate_image_loss: bool = False,
     mask_warper: nn.Module | None = None,
     mask_weight: float = 1.0,
     int_mask_weight: float = 0.1,
@@ -209,24 +218,18 @@ def train_epoch(
             return_field_type='displacement',
         )
 
+        grad_loss = grad_loss_fn(displacement)
+
         if unsupervised:
             img_loss = image_loss_fn(target, warped_source)
+            loss = img_loss + lambda_smooth * grad_loss
+            metric = loss
         else:
             source_binary = (batch['source_mask'].to(device) > 0).float()
             target_binary = (batch['target_mask'].to(device) > 0).float()
             union_binary = (source_binary + target_binary).clamp(0.0, 1.0)
             cell_region = dilate_mask(union_binary, radius=10)
             img_loss = image_loss_fn(target * cell_region, warped_source * cell_region)
-
-        if negate_image_loss:
-            img_loss = -img_loss
-
-        grad_loss = grad_loss_fn(displacement)
-
-        if unsupervised:
-            loss = img_loss + lambda_smooth * grad_loss
-            metric = loss
-        else:
             warped_mask = mask_warper(source_binary, displacement)
             mask_loss = soft_dice_loss(warped_mask, target_binary)
             loss = mask_weight * mask_loss + int_mask_weight * img_loss + lambda_smooth * grad_loss
@@ -300,42 +303,33 @@ def main() -> None:
         # Bilinear SpatialTransformer for differentiable mask warping during training.
         mask_warper = _BorderSpatialTransformer(interpolation_mode='linear').to(device)
 
-    # NCC and SSIM return positive similarity (1.0 = perfect) — negate for minimization.
-    # CombinedImageLoss handles per-component negation internally, so negate_image_loss=False.
     if args.loss == 'ncc':
-        image_loss_fn = ne.nn.modules.NCC()
-        negate_image_loss = True
+        image_loss_fn = _Negated(ne.nn.modules.NCC())
         lambda_default = 1.0
     elif args.loss == 'ssim':
-        image_loss_fn = SSIM(data_range=1.0, size_average=True, channel=1)
-        negate_image_loss = True
+        image_loss_fn = _Negated(SSIM(data_range=1.0, size_average=True, channel=1))
         lambda_default = 1.0
     elif args.loss == 'ncc+ssim':
         image_loss_fn = CombinedImageLoss(
             loss_functions=[
-                ne.nn.modules.NCC(),
-                SSIM(data_range=1.0, size_average=True, channel=1),
+                _Negated(ne.nn.modules.NCC()),
+                _Negated(SSIM(data_range=1.0, size_average=True, channel=1)),
             ],
             weights=[args.ncc_weight, args.ssim_weight],
-            negations=[True, True],
         )
-        negate_image_loss = False
         lambda_default = 1.0
     elif args.loss == 'mse+ncc+ssim':
         image_loss_fn = CombinedImageLoss(
             loss_functions=[
                 ne.nn.modules.MSE(),
-                ne.nn.modules.NCC(),
-                SSIM(data_range=1.0, size_average=True, channel=1),
+                _Negated(ne.nn.modules.NCC()),
+                _Negated(SSIM(data_range=1.0, size_average=True, channel=1)),
             ],
             weights=[args.mse_weight, args.ncc_weight, args.ssim_weight],
-            negations=[False, True, True],
         )
-        negate_image_loss = False
         lambda_default = 1.0
     else:  # mse
         image_loss_fn = ne.nn.modules.MSE()
-        negate_image_loss = False
         lambda_default = 0.01
 
     lambda_smooth = args.lambda_param if args.lambda_param is not None else lambda_default
@@ -363,7 +357,6 @@ def main() -> None:
             grad_loss_fn=grad_loss_fn,
             lambda_smooth=lambda_smooth,
             device=device,
-            negate_image_loss=negate_image_loss,
             mask_warper=mask_warper,
             mask_weight=args.mask_weight,
             int_mask_weight=args.int_weight,

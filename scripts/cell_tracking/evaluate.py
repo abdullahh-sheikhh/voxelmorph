@@ -35,7 +35,6 @@ import voxelmorph as vxm
 from scripts.cell_tracking.dataset import CellTrackingDataset
 from scripts.cell_tracking.horn_schunck import hs_optical_flow, warp
 
-
 @dataclass
 class PairMetrics:
     """Evaluation metrics for a single registration pair."""
@@ -304,15 +303,6 @@ def visualize_registration(
     plt.close(fig)
 
 
-def _cv2_flow_to_vxm(flow: np.ndarray) -> np.ndarray:
-    """Convert OpenCV dense flow (H, W, 2) to VoxelMorph displacement (2, H, W).
-
-    OpenCV convention: flow[..., 0] = x (col), flow[..., 1] = y (row).
-    VoxelMorph convention: displacement[0] = x, displacement[1] = y. Same order.
-    """
-    return np.stack([flow[..., 0], flow[..., 1]], axis=0)
-
-
 def _warp_image_cv2(image: np.ndarray, flow: np.ndarray) -> np.ndarray:
     """Warp image (H, W) using OpenCV dense flow (H, W, 2). Returns (H, W)."""
     h, w = image.shape
@@ -327,6 +317,14 @@ def _warp_image_cv2(image: np.ndarray, flow: np.ndarray) -> np.ndarray:
         interpolation=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_REPLICATE,
     )
+
+
+def _append_metrics(metrics: dict, method: str, result: PairMetrics) -> None:
+    metrics[method]['runtime'].append(result.runtime)
+    if result.dice is not None:
+        metrics[method]['dice'].append(result.dice)
+    if result.masked_mse is not None:
+        metrics[method]['masked_mse'].append(result.masked_mse)
 
 
 def main() -> None:
@@ -374,7 +372,17 @@ def main() -> None:
     output_directory = Path(args.output_dir)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    method_names = ['horn_schunck', 'farneback', 'tvl1', 'vxm'] if use_baselines else ['vxm']
+    methods: list[tuple[str, str]] = (
+        [
+            ('horn_schunck', 'Horn & Schunck'),
+            ('farneback', 'Farneback'),
+            ('tvl1', 'TV-L1'),
+            ('vxm', 'VoxelMorph'),
+        ]
+        if use_baselines
+        else [('vxm', 'VoxelMorph')]
+    )
+    method_names = [key for key, _ in methods]
     metrics: dict[str, dict[str, list[float]]] = {
         method: {'dice': [], 'masked_mse': [], 'runtime': []}
         for method in method_names
@@ -425,11 +433,7 @@ def main() -> None:
                 displacement_numpy, source_mask, target_mask,
                 warped_numpy, target_numpy, vxm_runtime,
             )
-            metrics['vxm']['runtime'].append(vxm_result.runtime)
-            if vxm_result.dice is not None:
-                metrics['vxm']['dice'].append(vxm_result.dice)
-            if vxm_result.masked_mse is not None:
-                metrics['vxm']['masked_mse'].append(vxm_result.masked_mse)
+            _append_metrics(metrics, 'vxm', vxm_result)
 
             # Horn & Schunck baseline
             if use_baselines:
@@ -447,11 +451,7 @@ def main() -> None:
                     hs_displacement_vxm, source_mask, target_mask,
                     hs_warped, target_numpy, hs_runtime,
                 )
-                metrics['horn_schunck']['runtime'].append(hs_result.runtime)
-                if hs_result.dice is not None:
-                    metrics['horn_schunck']['dice'].append(hs_result.dice)
-                if hs_result.masked_mse is not None:
-                    metrics['horn_schunck']['masked_mse'].append(hs_result.masked_mse)
+                _append_metrics(metrics, 'horn_schunck', hs_result)
 
                 src_uint8 = (source_numpy * 255).astype(np.uint8)
                 tgt_uint8 = (target_numpy * 255).astype(np.uint8)
@@ -465,32 +465,24 @@ def main() -> None:
                 )
                 fb_runtime = time.time() - time_start
                 fb_warped = _warp_image_cv2(source_numpy, flow_fb)
-                fb_disp = _cv2_flow_to_vxm(flow_fb)
+                fb_disp = flow_fb.transpose(2, 0, 1)
                 fb_result = evaluate_pair(
                     fb_disp, source_mask, target_mask,
                     fb_warped, target_numpy, fb_runtime,
                 )
-                metrics['farneback']['runtime'].append(fb_result.runtime)
-                if fb_result.dice is not None:
-                    metrics['farneback']['dice'].append(fb_result.dice)
-                if fb_result.masked_mse is not None:
-                    metrics['farneback']['masked_mse'].append(fb_result.masked_mse)
+                _append_metrics(metrics, 'farneback', fb_result)
 
                 # TV-L1
                 time_start = time.time()
                 flow_tvl1 = tvl1.calc(src_uint8, tgt_uint8, None)
                 tvl1_runtime = time.time() - time_start
                 tvl1_warped = _warp_image_cv2(source_numpy, flow_tvl1)
-                tvl1_disp = _cv2_flow_to_vxm(flow_tvl1)
+                tvl1_disp = flow_tvl1.transpose(2, 0, 1)
                 tvl1_result = evaluate_pair(
                     tvl1_disp, source_mask, target_mask,
                     tvl1_warped, target_numpy, tvl1_runtime,
                 )
-                metrics['tvl1']['runtime'].append(tvl1_result.runtime)
-                if tvl1_result.dice is not None:
-                    metrics['tvl1']['dice'].append(tvl1_result.dice)
-                if tvl1_result.masked_mse is not None:
-                    metrics['tvl1']['masked_mse'].append(tvl1_result.masked_mse)
+                _append_metrics(metrics, 'tvl1', tvl1_result)
 
             if i < 5:
                 visualize_registration(
@@ -509,14 +501,7 @@ def main() -> None:
             print(log_line)
 
     print(f'\n--- Results ({number_of_pairs} pairs) ---')
-    display_names = {
-        'horn_schunck': 'Horn & Schunck',
-        'farneback': 'Farneback',
-        'tvl1': 'TV-L1',
-        'vxm': 'VoxelMorph',
-    }
-    for method in method_names:
-        name = display_names[method]
+    for method, name in methods:
         dice_string = 'N/A'
         mse_string = 'N/A'
         if metrics[method]['dice']:
