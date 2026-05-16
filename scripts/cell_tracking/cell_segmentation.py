@@ -19,7 +19,7 @@ from torch.utils.data import Dataset
 from skimage import io
 
 
-class CellCropBuilder:
+class SegmentedCellBuilder:
     """
     Preprocesses the Cell Tracking Challenge dataset into per-cell NPZ crops.
 
@@ -185,7 +185,7 @@ class CellCropBuilder:
         return isolated
 
 
-class CellCropDataset(Dataset):
+class SegmentedCellDataset(Dataset):
     """
     PyTorch Dataset that loads pre-built per-cell NPZ crops.
 
@@ -197,7 +197,7 @@ class CellCropDataset(Dataset):
     Parameters
     ----------
     root_dir : str or Path
-        Directory containing the NPZ crop files (output of CellCropBuilder).
+        Directory containing the NPZ crop files (output of SegmentedCellBuilder).
     split : str
         'train' or 'val'.
     val_sequence : str

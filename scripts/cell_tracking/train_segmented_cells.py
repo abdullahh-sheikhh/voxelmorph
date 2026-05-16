@@ -1,16 +1,16 @@
 """
 Train VoxelMorph on per-cell segmented crop dataset with NCC+SSIM loss.
 
-Loads NPZ crops from CellCropDataset (built by CellCropBuilder), trains
+Loads NPZ crops from SegmentedCellDataset (built by SegmentedCellBuilder), trains
 VxmPairwise with NCC+SSIM + spatial gradient regularization, validates on
 held-out sequence 02 crops each epoch, and saves metrics.json in the same
 format as evaluate.py so the Results table can include this experiment.
 
 Usage:
     python -m scripts.cell_tracking.train_segmented_cells \
-        --data-dir dataset/cell_crops \
+        --data-dir dataset/segmented_cells \
         --epochs 200 \
-        --output-dir output/cell_crops_ncc_ssim
+        --output-dir output/segmented_cells_ncc_ssim
 """
 
 import os
@@ -32,7 +32,7 @@ import neurite as ne
 import voxelmorph as vxm
 from pytorch_msssim import SSIM
 
-from scripts.cell_tracking.cell_segmentation import CellCropDataset
+from scripts.cell_tracking.cell_segmentation import SegmentedCellDataset
 from scripts.cell_tracking.train import (
     _BorderSpatialTransformer,
     _Negated,
@@ -188,7 +188,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Train VoxelMorph on segmented per-cell crop dataset (NCC+SSIM)'
     )
-    parser.add_argument('--data-dir', type=str, default='dataset/cell_crops')
+    parser.add_argument('--data-dir', type=str, default='dataset/segmented_cells')
     parser.add_argument('--val-sequence', type=str, default='02')
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--batch-size', type=int, default=4)
@@ -196,14 +196,14 @@ def main() -> None:
     parser.add_argument('--lambda-reg', type=float, default=1.0)
     parser.add_argument('--mask-weight', type=float, default=1.0)
     parser.add_argument('--int-weight', type=float, default=0.1)
-    parser.add_argument('--output-dir', type=str, default='output/cell_crops_ncc_ssim')
+    parser.add_argument('--output-dir', type=str, default='output/segmented_cells_ncc_ssim')
     parser.add_argument('--save-every', type=int, default=50)
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    train_dataset = CellCropDataset(args.data_dir, split='train', val_sequence=args.val_sequence)
-    val_dataset   = CellCropDataset(args.data_dir, split='val',   val_sequence=args.val_sequence)
+    train_dataset = SegmentedCellDataset(args.data_dir, split='train', val_sequence=args.val_sequence)
+    val_dataset   = SegmentedCellDataset(args.data_dir, split='val',   val_sequence=args.val_sequence)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,  num_workers=2)
     val_loader   = DataLoader(val_dataset,   batch_size=args.batch_size, shuffle=False, num_workers=2)

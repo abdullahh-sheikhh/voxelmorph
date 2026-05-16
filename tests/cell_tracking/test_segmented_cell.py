@@ -3,12 +3,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from scripts.cell_tracking.cell_segmentation import CellCropBuilder, CellCropDataset
+from scripts.cell_tracking.cell_segmentation import SegmentedCellBuilder, SegmentedCellDataset
 
 
 @pytest.fixture
 def builder(tmp_path):
-    return CellCropBuilder(
+    return SegmentedCellBuilder(
         data_dir=str(tmp_path / 'data'),
         output_dir=str(tmp_path / 'crops'),
         crop_size=224,
@@ -63,7 +63,7 @@ def test_crop_window_clamps_near_bottom_edge(builder):
     assert top == 296
 
 
-# ── CellCropDataset tests ──────────────────────────────────────────────────
+# ── SegmentedCellDataset tests ──────────────────────────────────────────────────
 
 def _make_crop(path: Path, seq_prefix: str, label: int) -> None:
     arr = np.random.rand(224, 224).astype(np.float32)
@@ -79,20 +79,20 @@ def test_dataset_split_train(tmp_path):
     _make_crop(tmp_path, '01', 1)
     _make_crop(tmp_path, '01', 2)
     _make_crop(tmp_path, '02', 1)
-    ds = CellCropDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
+    ds = SegmentedCellDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
     assert len(ds) == 2
 
 
 def test_dataset_split_val(tmp_path):
     _make_crop(tmp_path, '01', 1)
     _make_crop(tmp_path, '02', 1)
-    ds = CellCropDataset(root_dir=str(tmp_path), split='val', val_sequence='02')
+    ds = SegmentedCellDataset(root_dir=str(tmp_path), split='val', val_sequence='02')
     assert len(ds) == 1
 
 
 def test_dataset_getitem_shapes(tmp_path):
     _make_crop(tmp_path, '01', 3)
-    ds = CellCropDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
+    ds = SegmentedCellDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
     sample = ds[0]
     for key in ('source', 'target', 'source_mask', 'target_mask'):
         assert key in sample
@@ -102,7 +102,7 @@ def test_dataset_getitem_shapes(tmp_path):
 
 def test_dataset_getitem_values_in_range(tmp_path):
     _make_crop(tmp_path, '01', 1)
-    ds = CellCropDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
+    ds = SegmentedCellDataset(root_dir=str(tmp_path), split='train', val_sequence='02')
     sample = ds[0]
     assert sample['source'].min() >= 0.0
     assert sample['source'].max() <= 1.0
