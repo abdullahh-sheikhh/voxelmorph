@@ -30,6 +30,7 @@ import torch
 import matplotlib.pyplot as plt
 import cv2
 from skimage import io
+from skimage.registration import optical_flow_tvl1
 
 import voxelmorph as vxm
 from scripts.cell_tracking.dataset import CellTrackingDataset
@@ -387,17 +388,23 @@ def main() -> None:
         method: {'dice': [], 'masked_mse': [], 'runtime': []}
         for method in method_names
     }
-    if use_baselines:
-        tvl1 = cv2.optflow.DualTVL1OpticalFlow_create()
-        tvl1.setLambda(0.10)          # default 0.15 — lower for sharper cell boundaries
-        tvl1.setTheta(0.20)           # default 0.30 — tighter u-v coupling, more precise
-        tvl1.setTau(0.25)             # keep — satisfies convergence condition τ ≤ 1/(8·θ)
-        tvl1.setScalesNumber(3)       # default 5  — reduce, cell motion < 5 px needs no deep pyramid
-        tvl1.setScaleStep(0.7)        # default 0.8 — slightly larger jumps between levels
-        tvl1.setWarpingsNumber(7)     # default 5  — more linearisation passes for halo regions
-        tvl1.setEpsilon(0.005)        # default 0.01 — tighter inner convergence
-    else:
-        tvl1 = None
+    def _tvl1_flow(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+        """Run scikit-image TV-L1 and return flow in OpenCV layout (H, W, 2) [x, y].
+
+        OpenCV's `cv2.optflow.DualTVL1OpticalFlow_create` was removed in
+        opencv-contrib 4.6; scikit-image's implementation is the same algorithm.
+        """
+        flow_yx = optical_flow_tvl1(
+            reference_image=target,
+            moving_image=source,
+            attachment=15.0,
+            tightness=0.10,   # ~ OpenCV's lambda
+            num_warp=7,       # ~ OpenCV's WarpingsNumber
+            num_iter=10,
+            tol=0.005,        # ~ OpenCV's Epsilon
+        )
+        # (2, H, W) [y, x] -> (H, W, 2) [x, y]
+        return np.stack([flow_yx[1], flow_yx[0]], axis=-1)
 
     print(f'\nEvaluating {number_of_pairs} pairs...\n')
 
@@ -472,9 +479,9 @@ def main() -> None:
                 )
                 _append_metrics(metrics, 'farneback', fb_result)
 
-                # TV-L1
+                # TV-L1 (scikit-image — OpenCV's DualTVL1 was removed in opencv-contrib 4.6)
                 time_start = time.time()
-                flow_tvl1 = tvl1.calc(src_uint8, tgt_uint8, None)
+                flow_tvl1 = _tvl1_flow(source_numpy, target_numpy)
                 tvl1_runtime = time.time() - time_start
                 tvl1_warped = _warp_image_cv2(source_numpy, flow_tvl1)
                 tvl1_disp = flow_tvl1.transpose(2, 0, 1)
@@ -502,6 +509,9 @@ def main() -> None:
 
     print(f'\n--- Results ({number_of_pairs} pairs) ---')
     for method, name in methods:
+        if not metrics[method]['runtime']:
+            print(f'  {name}: [skipped]')
+            continue
         dice_string = 'N/A'
         mse_string = 'N/A'
         if metrics[method]['dice']:
@@ -521,6 +531,8 @@ def main() -> None:
 
     results: dict = {'n_pairs': number_of_pairs, 'device': device}
     for method in method_names:
+        if not metrics[method]['runtime']:
+            continue
         results[method] = {'runtime_mean': float(np.mean(metrics[method]['runtime']))}
         if metrics[method]['dice']:
             results[method]['dice_mean'] = float(np.mean(metrics[method]['dice']))

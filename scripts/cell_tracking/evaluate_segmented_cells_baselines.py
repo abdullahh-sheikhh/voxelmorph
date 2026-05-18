@@ -24,6 +24,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from skimage.registration import optical_flow_tvl1
 from tqdm import tqdm
 
 from scripts.cell_tracking.cell_segmentation import SegmentedCellDataset
@@ -50,16 +51,24 @@ def _binary_dice(pred_mask: np.ndarray, target_mask: np.ndarray) -> float | None
     return 2.0 * intersection / total
 
 
-def _build_tvl1():
-    tvl1 = cv2.optflow.DualTVL1OpticalFlow_create()
-    tvl1.setLambda(0.10)
-    tvl1.setTheta(0.20)
-    tvl1.setTau(0.25)
-    tvl1.setScalesNumber(3)
-    tvl1.setScaleStep(0.7)
-    tvl1.setWarpingsNumber(7)
-    tvl1.setEpsilon(0.005)
-    return tvl1
+def _tvl1_flow(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Run scikit-image TV-L1 and return flow in OpenCV layout (H, W, 2) [x, y].
+
+    OpenCV's `cv2.optflow.DualTVL1OpticalFlow_create` was removed in
+    opencv-contrib 4.6; scikit-image keeps the same algorithm. `optical_flow_tvl1`
+    returns (2, H, W) with [0]=row(y) flow and [1]=col(x) flow.
+    """
+    flow_yx = optical_flow_tvl1(
+        reference_image=target,
+        moving_image=source,
+        attachment=15.0,
+        tightness=0.10,
+        num_warp=7,
+        num_iter=10,
+        tol=0.005,
+    )
+    # (2, H, W) [y, x] -> (H, W, 2) [x, y]
+    return np.stack([flow_yx[1], flow_yx[0]], axis=-1)
 
 
 def main() -> None:
@@ -77,8 +86,6 @@ def main() -> None:
         val_sequence=args.val_sequence,
     )
     print(f'Validation crops: {len(val_dataset)}')
-
-    tvl1 = _build_tvl1()
 
     metrics = {
         'horn_schunck': {'dice': [], 'runtime': []},
@@ -121,9 +128,9 @@ def main() -> None:
             metrics['farneback']['dice'].append(fb_dice)
         metrics['farneback']['runtime'].append(fb_runtime)
 
-        # TV-L1
+        # TV-L1 (scikit-image — OpenCV's DualTVL1 was removed in opencv-contrib 4.6)
         t0 = time.perf_counter()
-        flow_tvl1 = tvl1.calc(src_uint8, tgt_uint8, None)
+        flow_tvl1 = _tvl1_flow(source, target)
         tvl1_runtime = time.perf_counter() - t0
         tvl1_warped_mask = _warp_image_cv2(source_mask, flow_tvl1)
         tvl1_dice = _binary_dice(tvl1_warped_mask, target_mask)
@@ -135,10 +142,12 @@ def main() -> None:
     for method in ('horn_schunck', 'farneback', 'tvl1'):
         dice_scores = metrics[method]['dice']
         runtimes = metrics[method]['runtime']
+        if not runtimes:
+            continue
         results[method] = {
             'dice_mean':    float(np.mean(dice_scores)) if dice_scores else 0.0,
             'dice_std':     float(np.std(dice_scores))  if dice_scores else 0.0,
-            'runtime_mean': float(np.mean(runtimes))    if runtimes    else 0.0,
+            'runtime_mean': float(np.mean(runtimes)),
         }
 
     output_dir = Path(args.output_dir)
@@ -151,7 +160,10 @@ def main() -> None:
         ('farneback',    'Farneback'),
         ('tvl1',         'TV-L1'),
     ]:
-        r = results[method]
+        r = results.get(method)
+        if r is None:
+            print(f'  {label:14s}  [skipped]')
+            continue
         print(f'  {label:14s}  Dice: {r["dice_mean"]:.4f} +/- {r["dice_std"]:.4f}  '
               f'Runtime: {r["runtime_mean"]:.4f} s/crop')
     print(f'\nMetrics saved to {output_dir / "metrics.json"}')
