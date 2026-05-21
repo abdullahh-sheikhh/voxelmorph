@@ -14,8 +14,8 @@ Paper reference:
     IEEE TMI: Transactions on Medical Imaging. 38(8). pp 1788-1800. 2019.
 
 Usage:
-    python -m scripts.cell_tracking.train --data-dir dataset/train --sequences 01 --epochs 150
-    python -m scripts.cell_tracking.train --data-dir dataset/train --sequences 01 --loss ncc --lambda 1.0 --epochs 150
+    python -m cellular_deformations.train --data-dir dataset/train --sequences 01 --epochs 150
+    python -m cellular_deformations.train --data-dir dataset/train --sequences 01 --loss ncc --lambda 1.0 --epochs 150
 """
 
 import os
@@ -33,7 +33,7 @@ import neurite as ne
 
 import voxelmorph as vxm
 from pytorch_msssim import SSIM
-from scripts.cell_tracking.dataset import CellTrackingDataset
+from cellular_deformations.dataset import CellTrackingDataset
 
 
 class _BorderSpatialTransformer(vxm.nn.modules.SpatialTransformer):

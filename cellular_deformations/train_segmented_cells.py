@@ -7,7 +7,7 @@ held-out sequence 02 crops each epoch, and saves metrics.json in the same
 format as evaluate.py so the Results table can include this experiment.
 
 Usage:
-    python -m scripts.cell_tracking.train_segmented_cells \
+    python -m cellular_deformations.train_segmented_cells \
         --data-dir dataset/segmented_cells \
         --epochs 200 \
         --output-dir output/segmented_cells_ncc_ssim
@@ -32,8 +32,8 @@ import neurite as ne
 import voxelmorph as vxm
 from pytorch_msssim import SSIM
 
-from scripts.cell_tracking.cell_segmentation import SegmentedCellDataset
-from scripts.cell_tracking.train import (
+from cellular_deformations.cell_segmentation import SegmentedCellDataset
+from cellular_deformations.train import (
     _BorderSpatialTransformer,
     _Negated,
     CombinedImageLoss,

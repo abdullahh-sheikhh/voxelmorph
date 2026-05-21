@@ -8,7 +8,7 @@ metrics.json in the same format as evaluate.py so the segmented Results table
 can include these rows.
 
 Usage:
-    python -m scripts.cell_tracking.evaluate_segmented_cells_baselines \
+    python -m cellular_deformations.evaluate_segmented_cells_baselines \
         --data-dir dataset/segmented_cells \
         --val-sequence 02 \
         --output-dir output/segmented_cells_baselines
@@ -27,8 +27,8 @@ import numpy as np
 from skimage.registration import optical_flow_tvl1
 from tqdm import tqdm
 
-from scripts.cell_tracking.cell_segmentation import SegmentedCellDataset
-from scripts.cell_tracking.horn_schunck import hs_optical_flow, warp
+from cellular_deformations.cell_segmentation import SegmentedCellDataset
+from cellular_deformations.horn_schunck import hs_optical_flow, warp
 
 
 def _warp_image_cv2(image: np.ndarray, flow: np.ndarray) -> np.ndarray:

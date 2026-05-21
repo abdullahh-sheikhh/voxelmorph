@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from scripts.cell_tracking.cell_segmentation import SegmentedCellBuilder, SegmentedCellDataset
+from cellular_deformations.cell_segmentation import SegmentedCellBuilder, SegmentedCellDataset
 
 
 @pytest.fixture

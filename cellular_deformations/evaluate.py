@@ -11,7 +11,7 @@ Masks are loaded from Silver Truth (ST) annotations, which cover all 115 frames
 per sequence (228 consecutive pairs total).
 
 Usage:
-    python -m scripts.cell_tracking.evaluate \
+    python -m cellular_deformations.evaluate \
         --model output/best.pt \
         --data-dir dataset/train \
         --gt-dir dataset/train \
@@ -33,8 +33,8 @@ from skimage import io
 from skimage.registration import optical_flow_tvl1
 
 import voxelmorph as vxm
-from scripts.cell_tracking.dataset import CellTrackingDataset
-from scripts.cell_tracking.horn_schunck import hs_optical_flow, warp
+from cellular_deformations.dataset import CellTrackingDataset
+from cellular_deformations.horn_schunck import hs_optical_flow, warp
 
 @dataclass
 class PairMetrics:

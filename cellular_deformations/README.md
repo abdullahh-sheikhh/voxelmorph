@@ -1,4 +1,4 @@
-# Cell Deformation Estimation with VoxelMorph
+# Adapting VoxelMorph to compute cellular deformations in biological imaging
 
 2D deformable registration for estimating cell deformations using [VoxelMorph](https://github.com/voxelmorph/voxelmorph), compared against Horn & Schunck, Farneback, and TV-L1 optical flow baselines.
 
@@ -85,7 +85,7 @@ All commands run from the project root.
 ### Train
 
 ```bash
-python -m scripts.cell_tracking.train \
+python -m cellular_deformations.train \
     --data-dir dataset/train \
     --sequences 01 \
     --epochs 200 \
@@ -112,7 +112,7 @@ Outputs: `best.pt`, `final.pt`, `checkpoint_epoch*.pt`, `loss_curve.png`
 ### Evaluate
 
 ```bash
-python -m scripts.cell_tracking.evaluate \
+python -m cellular_deformations.evaluate \
     --model output/ncc/best.pt \
     --data-dir dataset/train \
     --gt-dir dataset/train \
@@ -130,7 +130,7 @@ Use `--no-baselines` to skip classical methods.
 ### Register
 
 ```bash
-python -m scripts.cell_tracking.register \
+python -m cellular_deformations.register \
     --moving dataset/test/01/t000.tif \
     --fixed dataset/test/01/t001.tif \
     --model output/best.pt \
@@ -141,7 +141,7 @@ python -m scripts.cell_tracking.register \
 ## Files
 
 ```
-scripts/cell_tracking/
+cellular_deformations/
 ├── README.md             # This file
 ├── __init__.py
 ├── dataset.py            # CellTrackingDataset — TIF loader, padding, normalization

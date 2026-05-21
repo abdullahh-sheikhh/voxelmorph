@@ -160,7 +160,7 @@ CVPR 2018. [eprint arXiv:1802.02604](https://arxiv.org/abs/1802.02604)
 
 We adapt VoxelMorph for 2D cell tracking on phase-contrast microscopy data from the
 [Cell Tracking Challenge](http://celltrackingchallenge.net/). All cell tracking code
-lives in `scripts/cell_tracking/` — no original VoxelMorph files are modified.
+lives in `cellular_deformations/` — no original VoxelMorph files are modified.
 
 - **Dataset**: Glioblastoma-astrocytoma U373 cells, 696x520 px, 8-bit grayscale, 15 min/frame
 - **Model**: VxmPairwise(ndim=2, features=[16,32,32,32]), 83K parameters
@@ -169,9 +169,9 @@ lives in `scripts/cell_tracking/` — no original VoxelMorph files are modified.
 - **Evaluation**: Dice, MaskedMSE, runtime
 - **Split**: simple sequence-based train/test split, e.g. train on `01`, evaluate on `02`
 - **Training**: standard runs now target 150 epochs
-- **Colab notebook**: [`scripts/cell_tracking/train_colab.ipynb`](scripts/cell_tracking/train_colab.ipynb)
+- **Colab notebook**: [`cellular_deformations/train_colab.ipynb`](cellular_deformations/train_colab.ipynb)
 
-See [`scripts/cell_tracking/README.md`](scripts/cell_tracking/README.md) for full details.
+See [`cellular_deformations/README.md`](cellular_deformations/README.md) for full details.
 
 
 # Notes
